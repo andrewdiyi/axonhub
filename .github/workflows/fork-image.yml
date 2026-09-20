@@ -1,0 +1,47 @@
+name: Publish fork image (GHCR)
+
+# Builds this fork's Docker image and pushes it to GitHub Container Registry so
+# the deployment host only has to pull it. GHCR authenticates with the built-in
+# GITHUB_TOKEN, so no repository secrets are required.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feat/codex-turn-state
+
+jobs:
+  build:
+    name: Build & push (linux/amd64)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build & push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/axonhub:feat-codex-turn-state
+            ghcr.io/${{ github.repository_owner }}/axonhub:sha-${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: false
+          sbom: false
