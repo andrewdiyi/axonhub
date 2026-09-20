@@ -33,6 +33,24 @@ interface RequestDetailContentProps {
   isPreviewStreaming?: boolean;
 }
 
+// responseModelOf extracts the model the upstream provider reported in a
+// response body. The field is only present when the provider returned it, so
+// callers treat a missing value as "unknown" and render nothing.
+function responseModelOf(value: unknown): string | undefined {
+  let body = value;
+  if (typeof body === 'string') {
+    try {
+      body = JSON.parse(body);
+    } catch {
+      return undefined;
+    }
+  }
+  if (!body || typeof body !== 'object') return undefined;
+
+  const model = (body as Record<string, unknown>).model;
+  return typeof model === 'string' && model.trim() !== '' ? model.trim() : undefined;
+}
+
 export function RequestDetailContent({ requestId, projectId, previewRequest, isPreviewStreaming = false }: RequestDetailContentProps) {
   const { t, i18n } = useTranslation();
   const locale = i18n.language === 'zh' ? zhCN : enUS;
@@ -94,6 +112,22 @@ export function RequestDetailContent({ requestId, projectId, previewRequest, isP
     }
     return parseResponse(request.responseBody, request.responseChunks);
   }, [previewRequest, request]);
+
+  // The client-visible response is checked first, then each execution's
+  // upstream response: a gateway may rewrite the former while the latter keeps
+  // what the provider actually served.
+  const responseModelID = useMemo(() => {
+    const fromResponse = responseModelOf(request?.responseBody);
+    if (fromResponse) return fromResponse;
+
+    for (const item of (executions ?? []) as Array<Record<string, unknown>>) {
+      const node = (item?.node ?? item) as Record<string, unknown> | undefined;
+      const model = responseModelOf(node?.responseBody);
+      if (model) return model;
+    }
+
+    return undefined;
+  }, [executions, request?.responseBody]);
 
   const hasPreviewData = !!(parsedResponse.content || parsedResponse.reasoning || parsedResponse.toolCalls.length > 0);
   const isLive = isPreviewStreaming || !!(request?.status === 'processing' && request?.stream);
@@ -386,9 +420,22 @@ export function RequestDetailContent({ requestId, projectId, previewRequest, isP
                 <Database className='text-primary h-3.5 w-3.5' />
                 <span className='text-xs font-medium'>{t('requests.columns.modelId')}</span>
               </div>
-              <p className='bg-background rounded border px-2 py-0.5 font-mono text-xs'>
-                {request.modelID || t('requests.columns.unknown')}
-              </p>
+              <div className='flex items-center gap-1.5'>
+                <p className='bg-background rounded border px-2 py-0.5 font-mono text-xs'>
+                  {request.modelID || t('requests.columns.unknown')}
+                </p>
+                {responseModelID && responseModelID !== request.modelID && (
+                  <>
+                    <span className='text-muted-foreground text-xs'>→</span>
+                    <p
+                      className='rounded border border-amber-200 bg-amber-50 px-2 py-0.5 font-mono text-xs text-amber-700 dark:border-amber-800/50 dark:bg-amber-900/30 dark:text-amber-300'
+                      title={t('requests.columns.responseModelId')}
+                    >
+                      {responseModelID}
+                    </p>
+                  </>
+                )}
+              </div>
             </div>
 
             <div className='bg-muted/30 flex items-center justify-between gap-2 rounded-lg border px-3 py-2'>

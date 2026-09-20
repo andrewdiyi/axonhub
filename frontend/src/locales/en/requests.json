@@ -2,6 +2,7 @@
   "requests.title": "Request Logs",
   "requests.description": "View and manage LLM call request logs",
   "requests.columns.modelId": "Model ID",
+  "requests.columns.responseModelId": "Response model",
   "requests.columns.request": "Request",
   "requests.columns.model": "Model",
   "requests.columns.usage": "Usage",
