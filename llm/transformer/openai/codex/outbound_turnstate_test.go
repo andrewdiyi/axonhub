@@ -38,7 +38,8 @@ func newTurnStateOutbound(t *testing.T, baseURL string, store *turnstate.Store) 
 				ExpiresAt:   time.Now().Add(time.Hour),
 			},
 		},
-		TurnState: store,
+		TurnState:        store,
+		TurnStateEnabled: true,
 	})
 	require.NoError(t, err)
 
@@ -138,4 +139,30 @@ func TestCodexOutbound_CompactSkipsTurnState(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, hreq.Headers.Get(TurnStateHeader))
 	assert.Nil(t, hreq.ResponseHeaderHook)
+}
+
+func TestCodexOutbound_TurnStateDisabledByChannelSetting(t *testing.T) {
+	ctx := context.Background()
+	store := turnstate.NewStore()
+	now := time.Now()
+
+	require.True(t, store.Observe(testChatAccountID, "gpt-6-astra", testTurnStateToken(t, now.Add(-time.Minute), 217)))
+
+	outbound, err := NewOutboundTransformer(Params{
+		BaseURL: "https://chatgpt.com/backend-api/codex#",
+		TokenProvider: staticTokenGetter{
+			creds: &oauth.OAuthCredentials{
+				AccessToken: testAccessTokenWithAccountID(t),
+				ExpiresAt:   time.Now().Add(time.Hour),
+			},
+		},
+		TurnState:        store,
+		TurnStateEnabled: false,
+	})
+	require.NoError(t, err)
+
+	hreq, err := outbound.TransformRequest(ctx, newTurnStateRequest("gpt-6-astra"))
+	require.NoError(t, err)
+	assert.Empty(t, hreq.Headers.Get(TurnStateHeader), "a disabled channel must not inject")
+	assert.Nil(t, hreq.ResponseHeaderHook, "a disabled channel must not harvest")
 }

@@ -59,6 +59,11 @@ type OutboundTransformer struct {
 	// turnState stores the reusable X-Codex-Turn-State templates. Nil means
 	// the process wide default store is used.
 	turnState *turnstate.Store
+
+	// turnStateEnabled mirrors the channel setting. The feature only ever
+	// applies to official Codex channels, but an operator can still turn it
+	// off per channel.
+	turnStateEnabled bool
 }
 
 var (
@@ -82,6 +87,10 @@ type Params struct {
 	// TurnState optionally overrides the process wide turn-state store.
 	// Tests inject their own; production code leaves it nil.
 	TurnState *turnstate.Store
+
+	// TurnStateEnabled turns harvesting and injection on for this channel.
+	// Callers set it from the channel settings; false disables the feature.
+	TurnStateEnabled bool
 }
 
 // isOfficialCodexBaseURL reports whether baseURL points at the official Codex
@@ -137,6 +146,7 @@ func NewOutboundTransformer(params Params) (*OutboundTransformer, error) {
 		official:          isOfficialCodexBaseURL(baseURL),
 		responsesOutbound: ro,
 		turnState:         params.TurnState,
+		turnStateEnabled:  params.TurnStateEnabled,
 	}, nil
 }
 
@@ -375,7 +385,7 @@ func (t *OutboundTransformer) TransformRequest(ctx context.Context, llmReq *llm.
 
 	// Turn-state only exists on the Codex turn endpoint. Compact and image
 	// requests use different upstream routes and never carry the header.
-	if t.isOfficialCodex() {
+	if t.isOfficialCodex() && t.turnStateEnabled {
 		switch originalRequestType {
 		case llm.RequestTypeCompact, llm.RequestTypeImage:
 		default:
@@ -394,7 +404,7 @@ func (t *OutboundTransformer) TransformRequest(ctx context.Context, llmReq *llm.
 // used outside the account and model it was issued for, so the store is keyed
 // on both. Relay upstreams are never touched.
 func (t *OutboundTransformer) applyTurnState(hreq *httpclient.Request, accountID, model string) {
-	if t == nil || hreq == nil || !turnstate.Enabled() {
+	if t == nil || hreq == nil || !t.turnStateEnabled || !turnstate.Enabled() {
 		return
 	}
 

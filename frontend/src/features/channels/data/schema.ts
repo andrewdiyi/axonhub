@@ -336,6 +336,7 @@ export const channelSettingsSchema = z.object({
   autoTrimedModelPrefixes: z.array(z.string()).optional().nullable(),
   hideOriginalModels: z.boolean().optional(),
   hideMappedModels: z.boolean().optional(),
+  codexTurnState: z.boolean().optional().nullable(),
   lowercaseModelId: z.boolean().optional(),
   bodyOverrideOperations: z.array(overrideOperationSchema).optional(),
   headerOverrideOperations: z.array(overrideOperationSchema).optional(),

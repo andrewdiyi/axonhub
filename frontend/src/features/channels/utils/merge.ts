@@ -116,6 +116,7 @@ export function mergeChannelSettingsForUpdate(
     autoTrimedModelPrefixes: pick('autoTrimedModelPrefixes', existing?.autoTrimedModelPrefixes ?? []),
     hideOriginalModels: pick('hideOriginalModels', existing?.hideOriginalModels ?? false),
     hideMappedModels: pick('hideMappedModels', existing?.hideMappedModels ?? false),
+    codexTurnState: pick('codexTurnState', existing?.codexTurnState ?? undefined),
     lowercaseModelId: pick('lowercaseModelId', existing?.lowercaseModelId ?? false),
     bodyOverrideOperations: pick('bodyOverrideOperations', existing?.bodyOverrideOperations ?? []),
     headerOverrideOperations: pick('headerOverrideOperations', existing?.headerOverrideOperations ?? []),

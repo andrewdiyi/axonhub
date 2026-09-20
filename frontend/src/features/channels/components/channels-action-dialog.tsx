@@ -416,6 +416,9 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
   const [passThroughBody, setPassThroughBody] = useState<boolean | null>(() => {
     return initialRow?.settings?.passThroughBody ?? null;
   });
+  const [codexTurnState, setCodexTurnState] = useState<boolean>(() => {
+    return initialRow?.settings?.codexTurnState ?? true;
+  });
   const [quotaRoutingMode, setQuotaRoutingMode] = useState<ChannelQuotaRoutingMode>(() => recallQuotaRoutingMode(initialRow?.settings));
   const [retryableStatusCodesText, setRetryableStatusCodesText] = useState(() =>
     formatRetryableStatusCodes(initialRow?.settings?.retryableStatusCodes)
@@ -1379,6 +1382,7 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
         const settingsPatch: Partial<ChannelSettings> = {
           passThroughUserAgent,
           passThroughBody,
+          codexTurnState,
           retryableStatusCodes,
           retryableErrorPatterns,
           // Cookie edits (including clearing the saved cookie) travel through
@@ -1446,6 +1450,7 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
           proxy: proxyConfig,
           passThroughUserAgent,
           passThroughBody,
+          codexTurnState,
           retryableStatusCodes,
           retryableErrorPatterns,
           ...quotaRoutingModeSettingsPatch(quotaRoutingMode),
@@ -1892,6 +1897,7 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
             setProxyPassword(initialRow?.settings?.proxy?.password || '');
             setPassThroughUserAgent(initialRow?.settings?.passThroughUserAgent ?? null);
             setPassThroughBody(initialRow?.settings?.passThroughBody ?? null);
+            setCodexTurnState(initialRow?.settings?.codexTurnState ?? true);
             setQuotaRoutingMode(recallQuotaRoutingMode(initialRow?.settings));
             setRetryableStatusCodesText(formatRetryableStatusCodes(initialRow?.settings?.retryableStatusCodes));
             setRetryableErrorPatternsText(formatRetryableErrorPatterns(initialRow?.settings?.retryableErrorPatterns));
@@ -3004,6 +3010,42 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                           )}
                         </div>
                       </FormItem>
+
+                      {isCodexType && authMode === 'official' && (
+                        <FormItem className='grid grid-cols-1 items-start gap-x-6 gap-y-2 md:grid-cols-8'>
+                          <div className='flex items-center gap-1.5 pt-2 md:col-span-2 md:justify-start'>
+                            <FormLabel className='font-medium'>{t('channels.dialogs.codexTurnState.label')}</FormLabel>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <button
+                                  type='button'
+                                  className='text-muted-foreground hover:text-foreground inline-flex items-center'
+                                  aria-label={t('channels.dialogs.codexTurnState.tooltip')}
+                                >
+                                  <Info className='h-3.5 w-3.5' />
+                                </button>
+                              </TooltipTrigger>
+                              <TooltipContent className='max-w-sm'>
+                                <p>{t('channels.dialogs.codexTurnState.tooltip')}</p>
+                              </TooltipContent>
+                            </Tooltip>
+                          </div>
+                          <div className='space-y-1 md:col-span-6'>
+                            <Select
+                              value={codexTurnState ? 'enabled' : 'disabled'}
+                              onValueChange={(value) => setCodexTurnState(value === 'enabled')}
+                            >
+                              <SelectTrigger data-testid='codex-turn-state-select'>
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value='enabled'>{t('channels.dialogs.codexTurnState.enabled')}</SelectItem>
+                                <SelectItem value='disabled'>{t('channels.dialogs.codexTurnState.disabled')}</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        </FormItem>
+                      )}
 
                       <FormItem className='grid grid-cols-1 items-start gap-x-6 gap-y-2 md:grid-cols-8'>
                         <div className='flex items-center gap-1.5 pt-2 md:col-span-2 md:justify-start'>

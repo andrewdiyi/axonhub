@@ -112,6 +112,7 @@ const CREATE_CHANNEL_MUTATION = `
         autoTrimedModelPrefixes
         hideOriginalModels
         hideMappedModels
+        codexTurnState
         lowercaseModelId
         quotaRoutingMode
         proxy {
@@ -204,6 +205,7 @@ const DUPLICATE_CHANNEL_MUTATION = `
         autoTrimedModelPrefixes
         hideOriginalModels
         hideMappedModels
+        codexTurnState
         lowercaseModelId
         quotaRoutingMode
         proxy {
@@ -296,6 +298,7 @@ const BULK_CREATE_CHANNELS_MUTATION = `
         autoTrimedModelPrefixes
         hideOriginalModels
         hideMappedModels
+        codexTurnState
         lowercaseModelId
         quotaRoutingMode
         proxy {
@@ -388,6 +391,7 @@ const UPDATE_CHANNEL_MUTATION = `
         autoTrimedModelPrefixes
         hideOriginalModels
         hideMappedModels
+        codexTurnState
         lowercaseModelId
         quotaRoutingMode
         proxy {
@@ -599,6 +603,7 @@ const BULK_IMPORT_CHANNELS_MUTATION = `
           autoTrimedModelPrefixes
           hideOriginalModels
           hideMappedModels
+          codexTurnState
           lowercaseModelId
           quotaRoutingMode
           transformOptions {
@@ -838,6 +843,7 @@ const BULK_UPDATE_CHANNEL_ORDERING_MUTATION = `
           autoTrimedModelPrefixes
           hideOriginalModels
           hideMappedModels
+          codexTurnState
           lowercaseModelId
           quotaRoutingMode
           transformOptions {
@@ -1057,6 +1063,7 @@ const CHANNEL_QUERY_FULL_NODE_SELECTION = `
             autoTrimedModelPrefixes
             hideOriginalModels
             hideMappedModels
+            codexTurnState
             lowercaseModelId
             quotaRoutingMode
             bodyOverrideOperations {

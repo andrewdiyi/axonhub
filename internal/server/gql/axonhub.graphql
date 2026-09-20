@@ -181,6 +181,7 @@ type ChannelSettings {
   autoTrimedModelPrefixes: [String!]
   hideOriginalModels: Boolean
   hideMappedModels: Boolean
+  codexTurnState: Boolean
   lowercaseModelId: Boolean
   proxy: ProxyConfig
   transformOptions: TransformOptions
@@ -265,6 +266,7 @@ input ChannelSettingsInput {
   autoTrimedModelPrefixes: [String!]
   hideOriginalModels: Boolean
   hideMappedModels: Boolean
+  codexTurnState: Boolean
   lowercaseModelId: Boolean
   proxy: ProxyConfigInput
   transformOptions: TransformOptionsInput

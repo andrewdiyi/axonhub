@@ -179,6 +179,12 @@ type ChannelSettings struct {
 	// When enabled, only the original model names (from field) will be exposed, not the mapped model names (to field).
 	HideMappedModels bool `json:"hideMappedModels"`
 
+	// CodexTurnState enables harvesting and injection of the official Codex
+	// X-Codex-Turn-State template for this channel. Nil means enabled: the
+	// feature only ever applies to official chatgpt.com channels, and the
+	// switch exists so an operator can turn it off per channel.
+	CodexTurnState *bool `json:"codexTurnState,omitempty"`
+
 	// LowercaseModelID converts model name matching keys to lowercase.
 	// When enabled, only RequestModel (used for matching) is lowercased; ActualModel
 	// (sent to provider) preserves original casing. This enables cross-channel load
@@ -676,4 +682,16 @@ func SerializeOverrideOperations(ops []OverrideOperation) (string, error) {
 	}
 
 	return string(data), nil
+}
+
+// IsCodexTurnStateEnabled reports whether this channel wants Codex turn-state
+// harvesting and injection. An unset value means enabled, so existing channels
+// keep the previous default and the UI only has to send an explicit false to
+// turn the feature off.
+func (s *ChannelSettings) IsCodexTurnStateEnabled() bool {
+	if s == nil || s.CodexTurnState == nil {
+		return true
+	}
+
+	return *s.CodexTurnState
 }

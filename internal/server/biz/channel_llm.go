@@ -353,10 +353,11 @@ func (svc *ChannelService) buildCodexOutbound(
 			if existing, ok := ch.Outbound.(*codex.OutboundTransformer); ok {
 				if tokens := existing.TokenProvider(); tokens != nil {
 					return codex.NewOutboundTransformer(codex.Params{
-						TokenProvider:   tokens,
-						BaseURL:         baseURL,
-						Transport:       transport,
-						AlphaSearchPath: alphaSearchPath,
+						TokenProvider:    tokens,
+						BaseURL:          baseURL,
+						Transport:        transport,
+						AlphaSearchPath:  alphaSearchPath,
+						TurnStateEnabled: c.Settings.IsCodexTurnStateEnabled(),
 					})
 				}
 			}
@@ -392,16 +393,21 @@ func (svc *ChannelService) buildCodexOutbound(
 			OnRefreshed: svc.onTokenRefreshed(c),
 		})
 
+		turnStateEnabled := c.Settings.IsCodexTurnStateEnabled()
+
 		if ch != nil && ch.startTokenProvider == nil {
 			setupAutoRefresh(ch, p, oauth.AutoRefreshOptions{})
-			setupTurnStateProbe(ch, p, httpClient, baseURL)
+			if turnStateEnabled {
+				setupTurnStateProbe(ch, p, httpClient, baseURL)
+			}
 		}
 
 		return codex.NewOutboundTransformer(codex.Params{
-			TokenProvider:   p,
-			BaseURL:         baseURL,
-			Transport:       transport,
-			AlphaSearchPath: alphaSearchPath,
+			TokenProvider:    p,
+			BaseURL:          baseURL,
+			Transport:        transport,
+			AlphaSearchPath:  alphaSearchPath,
+			TurnStateEnabled: turnStateEnabled,
 		})
 	}
 
