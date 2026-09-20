@@ -23,6 +23,7 @@ import (
 	"github.com/looplj/axonhub/llm/pipeline"
 	"github.com/looplj/axonhub/llm/streams"
 	"github.com/looplj/axonhub/llm/transformer"
+	"github.com/looplj/axonhub/llm/transformer/openai/codex/turnstate"
 	"github.com/looplj/axonhub/llm/transformer/openai/responses"
 	"github.com/looplj/axonhub/llm/transformer/shared"
 )
@@ -54,6 +55,10 @@ type OutboundTransformer struct {
 
 	executorMu         sync.Mutex
 	webSocketExecutors map[pipeline.Executor]*responses.WebSocketExecutor
+
+	// turnState stores the reusable X-Codex-Turn-State templates. Nil means
+	// the process wide default store is used.
+	turnState *turnstate.Store
 }
 
 var (
@@ -74,6 +79,9 @@ type Params struct {
 	BaseURL         string
 	Transport       string
 	AlphaSearchPath string
+	// TurnState optionally overrides the process wide turn-state store.
+	// Tests inject their own; production code leaves it nil.
+	TurnState *turnstate.Store
 }
 
 // isOfficialCodexBaseURL reports whether baseURL points at the official Codex
@@ -81,6 +89,13 @@ type Params struct {
 // completed JSON response instead of SSE.
 func isOfficialCodexBaseURL(baseURL string) bool {
 	return strings.Contains(strings.ToLower(baseURL), "chatgpt.com")
+}
+
+// IsOfficialCodexURL reports whether baseURL targets the official ChatGPT
+// Codex backend. Only that backend mints X-Codex-Turn-State values, so callers
+// outside this package use it to decide whether a harvest loop makes sense.
+func IsOfficialCodexURL(baseURL string) bool {
+	return isOfficialCodexBaseURL(baseURL)
 }
 
 // isOfficialCodex reports whether the transformer targets the official Codex backend.
@@ -121,6 +136,7 @@ func NewOutboundTransformer(params Params) (*OutboundTransformer, error) {
 		alphaSearchPath:   alphaSearchPath,
 		official:          isOfficialCodexBaseURL(baseURL),
 		responsesOutbound: ro,
+		turnState:         params.TurnState,
 	}, nil
 }
 
@@ -357,7 +373,57 @@ func (t *OutboundTransformer) TransformRequest(ctx context.Context, llmReq *llm.
 		hreq.Headers.Set("Version", codexDefaultVersion)
 	}
 
+	// Turn-state only exists on the Codex turn endpoint. Compact and image
+	// requests use different upstream routes and never carry the header.
+	if t.isOfficialCodex() {
+		switch originalRequestType {
+		case llm.RequestTypeCompact, llm.RequestTypeImage:
+		default:
+			t.applyTurnState(hreq, accountID, reqCopy.Model)
+		}
+	}
+
 	return hreq, nil
+}
+
+// applyTurnState injects the freshest live turn-state template for this
+// account and model, then arranges for newly minted values to be harvested
+// from the upstream response headers.
+//
+// Only the official Codex backend mints these values, and it rejects a value
+// used outside the account and model it was issued for, so the store is keyed
+// on both. Relay upstreams are never touched.
+func (t *OutboundTransformer) applyTurnState(hreq *httpclient.Request, accountID, model string) {
+	if t == nil || hreq == nil || !turnstate.Enabled() {
+		return
+	}
+
+	accountID = strings.TrimSpace(accountID)
+	model = strings.TrimSpace(model)
+	if accountID == "" || model == "" {
+		return
+	}
+
+	store := t.turnState
+	if store == nil {
+		store = turnstate.Default()
+	}
+
+	if entry, ok := store.Good(accountID, model); ok {
+		if hreq.Headers == nil {
+			hreq.Headers = http.Header{}
+		}
+		hreq.Headers.Set(TurnStateHeader, entry.Value)
+	}
+
+	hreq.ResponseHeaderHook = func(header http.Header) {
+		value := strings.TrimSpace(header.Get(TurnStateHeader))
+		if value == "" {
+			return
+		}
+
+		store.Observe(accountID, model, value)
+	}
 }
 
 func (t *OutboundTransformer) TransformResponse(ctx context.Context, httpResp *httpclient.Response) (*llm.Response, error) {

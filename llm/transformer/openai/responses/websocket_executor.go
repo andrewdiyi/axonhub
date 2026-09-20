@@ -478,6 +478,13 @@ func (e *WebSocketExecutor) dial(ctx context.Context, request *httpclient.Reques
 	if err != nil {
 		return nil, newWebSocketDialError(request, resp, err)
 	}
+
+	// The handshake response is the only place a header-borne value can be
+	// observed on the WebSocket path; frames carry no header block.
+	if request != nil && request.ResponseHeaderHook != nil && resp != nil {
+		request.ResponseHeaderHook(resp.Header)
+	}
+
 	return conn, nil
 }
 

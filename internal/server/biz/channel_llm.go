@@ -71,6 +71,56 @@ func setupAutoRefresh(ch *Channel, refresher AutoRefresher, opts oauth.AutoRefre
 	ch.stopTokenProvider = refresher.StopAutoRefresh
 }
 
+// setupTurnStateProbe starts the background harvest loop that keeps a reusable
+// X-Codex-Turn-State template available for every model of an official Codex
+// channel. Relay channels are skipped: they neither mint nor accept these
+// values, and the probe must never send official credentials to a relay.
+func setupTurnStateProbe(
+	ch *Channel,
+	tokens oauth.TokenGetter,
+	httpClient *httpclient.HttpClient,
+	baseURL string,
+) {
+	if ch == nil || httpClient == nil || !codex.IsOfficialCodexURL(baseURL) {
+		return
+	}
+
+	entries := ch.GetModelEntries()
+	models := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if actual := strings.TrimSpace(entry.ActualModel); actual != "" {
+			models = append(models, actual)
+		}
+	}
+
+	probe := codex.NewTurnStateProbe(codex.TurnStateProbeConfig{
+		Models:  models,
+		Client:  httpClient.GetNativeClient(),
+		BaseURL: baseURL,
+	}, tokens)
+	if probe == nil {
+		return
+	}
+
+	// The probe shares the channel's start/stop lifecycle with the token
+	// refresher, so a channel swap stops both and nothing is left running.
+	prevStart := ch.startTokenProvider
+	ch.startTokenProvider = func() {
+		probe.Start()
+		if prevStart != nil {
+			prevStart()
+		}
+	}
+
+	prevStop := ch.stopTokenProvider
+	ch.stopTokenProvider = func() {
+		probe.Stop()
+		if prevStop != nil {
+			prevStop()
+		}
+	}
+}
+
 func (c *Channel) IsModelSupported(model string) bool {
 	entries := c.GetModelEntries()
 	_, ok := entries[model]
@@ -344,6 +394,7 @@ func (svc *ChannelService) buildCodexOutbound(
 
 		if ch != nil && ch.startTokenProvider == nil {
 			setupAutoRefresh(ch, p, oauth.AutoRefreshOptions{})
+			setupTurnStateProbe(ch, p, httpClient, baseURL)
 		}
 
 		return codex.NewOutboundTransformer(codex.Params{

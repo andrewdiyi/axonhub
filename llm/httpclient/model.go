@@ -57,6 +57,14 @@ type Request struct {
 	// SkipInboundQueryMerge when set to true, prevents query parameters from the original
 	// inbound request from being merged into this request during MergeInboundRequest.
 	SkipInboundQueryMerge bool `json:"-"`
+
+	// ResponseHeaderHook, when set, is invoked with the upstream response
+	// headers as soon as they are received, before the body is read. It runs
+	// for plain HTTP responses and for WebSocket handshakes, which is what
+	// lets a caller observe metadata that only travels in headers (for
+	// example X-Codex-Turn-State). The hook must be fast, must not block and
+	// must not mutate the header it is given.
+	ResponseHeaderHook func(header http.Header) `json:"-"`
 }
 
 // AuthConfig represents authentication configuration.

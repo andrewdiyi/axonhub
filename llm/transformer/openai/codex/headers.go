@@ -17,6 +17,10 @@ const (
 	ClientRequestIDHeader = "X-Client-Request-Id"
 	BetaFeaturesHeader    = "X-Codex-Beta-Features"
 	ThreadIDHeader        = "Thread-Id"
+	// TurnStateHeader carries the Fernet turn-state token the official Codex
+	// backend mints per account and model. See internal state handling in
+	// applyTurnState.
+	TurnStateHeader = "X-Codex-Turn-State"
 	// ResponsesLiteHeader uses the canonical spelling ("Openai"): Go's
 	// http.Header canonicalizes keys, so lookups match regardless of case, and
 	// the wire name is case-insensitive per RFC 9110.

@@ -275,6 +275,8 @@ func (hc *HttpClient) Do(ctx context.Context, request *Request) (*Response, erro
 		return nil, fmt.Errorf("HTTP request failed: %w", err)
 	}
 
+	notifyResponseHeaders(request, rawResp.Header)
+
 	defer func() {
 		err := rawResp.Body.Close()
 		if err != nil {
@@ -365,6 +367,8 @@ func (hc *HttpClient) DoStream(ctx context.Context, request *Request) (streams.S
 	if err != nil {
 		return nil, fmt.Errorf("HTTP stream request failed: %w", err)
 	}
+
+	notifyResponseHeaders(request, rawResp.Header)
 
 	// Check for HTTP errors before creating stream
 	if rawResp.StatusCode >= 400 {

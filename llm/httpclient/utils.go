@@ -375,3 +375,14 @@ func MergeHTTPHeaders(dest, src http.Header) http.Header {
 
 	return dest
 }
+
+// notifyResponseHeaders delivers upstream response headers to the optional
+// per-request hook. Hooks observe metadata that only travels in headers, so
+// they run as soon as the response headers arrive and before any body is read.
+func notifyResponseHeaders(request *Request, header http.Header) {
+	if request == nil || request.ResponseHeaderHook == nil || header == nil {
+		return
+	}
+
+	request.ResponseHeaderHook(header)
+}
