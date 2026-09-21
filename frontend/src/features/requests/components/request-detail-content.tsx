@@ -116,6 +116,37 @@ export function RequestDetailContent({ requestId, projectId, previewRequest, isP
   // The client-visible response is checked first, then each execution's
   // upstream response: a gateway may rewrite the former while the latter keeps
   // what the provider actually served.
+  // useRequestExecutions hands back nodes, edges or a Relay connection
+  // depending on the caller, so normalise before walking it. A wrong shape must
+  // never throw while rendering the page.
+  const executionNodes = useMemo(() => {
+    const source = executions as unknown;
+    if (!source) return [] as Array<Record<string, unknown>>;
+
+    if (Array.isArray(source)) {
+      return source.flatMap((item) => {
+        if (!item || typeof item !== 'object') return [];
+        const record = item as Record<string, unknown>;
+        const node = (record.node ?? record) as Record<string, unknown> | undefined;
+        return node ? [node] : [];
+      });
+    }
+
+    if (typeof source === 'object') {
+      const edges = (source as { edges?: unknown }).edges;
+      if (Array.isArray(edges)) {
+        return edges.flatMap((edge) => {
+          if (!edge || typeof edge !== 'object') return [];
+          const record = edge as Record<string, unknown>;
+          const node = (record.node ?? record) as Record<string, unknown> | undefined;
+          return node ? [node] : [];
+        });
+      }
+    }
+
+    return [] as Array<Record<string, unknown>>;
+  }, [executions]);
+
   const responseModelID = useMemo(() => {
     // The client-visible body is rewritten back to the requested model, so the
     // upstream execution body is the one that reports what actually served the
@@ -125,14 +156,13 @@ export function RequestDetailContent({ requestId, projectId, previewRequest, isP
     const clientModel = responseModelOf(request?.responseBody);
     if (clientModel) candidates.push(clientModel);
 
-    for (const item of (executions ?? []) as Array<Record<string, unknown>>) {
-      const node = (item?.node ?? item) as Record<string, unknown> | undefined;
-      const model = responseModelOf(node?.responseBody);
+    for (const node of executionNodes) {
+      const model = responseModelOf(node.responseBody);
       if (model && !candidates.includes(model)) candidates.push(model);
     }
 
     return candidates.find((model) => model !== request?.modelID) ?? candidates[0];
-  }, [executions, request?.modelID, request?.responseBody]);
+  }, [executionNodes, request?.modelID, request?.responseBody]);
 
   const hasPreviewData = !!(parsedResponse.content || parsedResponse.reasoning || parsedResponse.toolCalls.length > 0);
   const isLive = isPreviewStreaming || !!(request?.status === 'processing' && request?.stream);
