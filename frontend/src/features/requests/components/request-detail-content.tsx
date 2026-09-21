@@ -117,17 +117,22 @@ export function RequestDetailContent({ requestId, projectId, previewRequest, isP
   // upstream response: a gateway may rewrite the former while the latter keeps
   // what the provider actually served.
   const responseModelID = useMemo(() => {
-    const fromResponse = responseModelOf(request?.responseBody);
-    if (fromResponse) return fromResponse;
+    // The client-visible body is rewritten back to the requested model, so the
+    // upstream execution body is the one that reports what actually served the
+    // request. Collect both and prefer whichever differs from the request.
+    const candidates: string[] = [];
+
+    const clientModel = responseModelOf(request?.responseBody);
+    if (clientModel) candidates.push(clientModel);
 
     for (const item of (executions ?? []) as Array<Record<string, unknown>>) {
       const node = (item?.node ?? item) as Record<string, unknown> | undefined;
       const model = responseModelOf(node?.responseBody);
-      if (model) return model;
+      if (model && !candidates.includes(model)) candidates.push(model);
     }
 
-    return undefined;
-  }, [executions, request?.responseBody]);
+    return candidates.find((model) => model !== request?.modelID) ?? candidates[0];
+  }, [executions, request?.modelID, request?.responseBody]);
 
   const hasPreviewData = !!(parsedResponse.content || parsedResponse.reasoning || parsedResponse.toolCalls.length > 0);
   const isLive = isPreviewStreaming || !!(request?.status === 'processing' && request?.stream);
