@@ -254,6 +254,10 @@ func (processor *ChatCompletionOrchestrator) Process(ctx context.Context, reques
 		applyModelMapping(inbound),
 		selectCandidates(inbound, processor.quotaProvider, processor.SystemService),
 		injectPrompts(inbound),
+		// Translate before prompt protection, so protection rules (authored in
+		// the client's original language) see translated content, not the
+		// pre-translation original.
+		translateMessages(inbound, outbound),
 		protectPrompts(inbound),
 		// Response pass-through middlewares run before persistRequest so the raw provider
 		// response is saved when pass-through is enabled.

@@ -14,10 +14,23 @@ import { SecuritySettings } from './security-settings';
 import { StorageSettings } from './storage-settings';
 import { BackupSettings } from './backup-settings';
 import { ProxyPresetsSettings } from './proxy-presets-settings';
+import { TranslationSettings } from './translation-settings';
 import { WebhookSettings } from './webhook-settings';
 import { usePermissions } from '@/hooks/usePermissions';
 
-type SystemTabKey = 'general' | 'security' | 'brand' | 'storage' | 'retry' | 'webhook' | 'proxy' | 'quota' | 'backup' | 'diagnostics' | 'about';
+type SystemTabKey =
+  | 'general'
+  | 'security'
+  | 'brand'
+  | 'storage'
+  | 'retry'
+  | 'webhook'
+  | 'translation'
+  | 'proxy'
+  | 'quota'
+  | 'backup'
+  | 'diagnostics'
+  | 'about';
 
 const systemTabKeys = new Set<SystemTabKey>([
   'general',
@@ -26,6 +39,7 @@ const systemTabKeys = new Set<SystemTabKey>([
   'storage',
   'retry',
   'webhook',
+  'translation',
   'proxy',
   'quota',
   'backup',
@@ -122,6 +136,9 @@ export function SystemSettingsTabs({ initialTab }: SystemSettingsTabsProps) {
         <TabsTrigger value='webhook' data-value='webhook'>
           {t('system.tabs.webhook')}
         </TabsTrigger>
+        <TabsTrigger value='translation' data-value='translation'>
+          {t('system.tabs.translation')}
+        </TabsTrigger>
         <TabsTrigger value='storage' data-value='storage'>
           {t('system.tabs.storage')}
         </TabsTrigger>
@@ -163,6 +180,9 @@ export function SystemSettingsTabs({ initialTab }: SystemSettingsTabsProps) {
         </TabsContent>
         <TabsContent value='webhook' className='mt-0 p-0'>
           <WebhookSettings />
+        </TabsContent>
+        <TabsContent value='translation' className='mt-0 p-0'>
+          <TranslationSettings />
         </TabsContent>
         <TabsContent value='proxy' className='mt-0 p-0'>
           <ProxyPresetsSettings />

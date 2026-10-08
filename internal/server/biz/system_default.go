@@ -143,3 +143,11 @@ var defaultSecuritySettings = SecuritySettings{
 	BlockedIPs:              []string{},
 	ShowRequestLogIPBanIcon: true,
 }
+
+var defaultTranslationSettings = TranslationSettings{
+	Enabled: false,
+	Scopes: []objects.TranslationScope{
+		objects.TranslationScopeUser,
+		objects.TranslationScopeAssistant,
+	},
+}

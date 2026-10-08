@@ -210,6 +210,12 @@ func (_c *RequestExecutionCreate) SetResponseBody(v objects.JSONRawMessage) *Req
 	return _c
 }
 
+// SetTranslatedResponseBody sets the "translated_response_body" field.
+func (_c *RequestExecutionCreate) SetTranslatedResponseBody(v objects.JSONRawMessage) *RequestExecutionCreate {
+	_c.mutation.SetTranslatedResponseBody(v)
+	return _c
+}
+
 // SetResponseChunks sets the "response_chunks" field.
 func (_c *RequestExecutionCreate) SetResponseChunks(v []objects.JSONRawMessage) *RequestExecutionCreate {
 	_c.mutation.SetResponseChunks(v)
@@ -539,6 +545,10 @@ func (_c *RequestExecutionCreate) createSpec() (*RequestExecution, *sqlgraph.Cre
 		_spec.SetField(requestexecution.FieldResponseBody, field.TypeJSON, value)
 		_node.ResponseBody = value
 	}
+	if value, ok := _c.mutation.TranslatedResponseBody(); ok {
+		_spec.SetField(requestexecution.FieldTranslatedResponseBody, field.TypeJSON, value)
+		_node.TranslatedResponseBody = value
+	}
 	if value, ok := _c.mutation.ResponseChunks(); ok {
 		_spec.SetField(requestexecution.FieldResponseChunks, field.TypeJSON, value)
 		_node.ResponseChunks = value
@@ -767,6 +777,24 @@ func (u *RequestExecutionUpsert) UpdateResponseBody() *RequestExecutionUpsert {
 // ClearResponseBody clears the value of the "response_body" field.
 func (u *RequestExecutionUpsert) ClearResponseBody() *RequestExecutionUpsert {
 	u.SetNull(requestexecution.FieldResponseBody)
+	return u
+}
+
+// SetTranslatedResponseBody sets the "translated_response_body" field.
+func (u *RequestExecutionUpsert) SetTranslatedResponseBody(v objects.JSONRawMessage) *RequestExecutionUpsert {
+	u.Set(requestexecution.FieldTranslatedResponseBody, v)
+	return u
+}
+
+// UpdateTranslatedResponseBody sets the "translated_response_body" field to the value that was provided on create.
+func (u *RequestExecutionUpsert) UpdateTranslatedResponseBody() *RequestExecutionUpsert {
+	u.SetExcluded(requestexecution.FieldTranslatedResponseBody)
+	return u
+}
+
+// ClearTranslatedResponseBody clears the value of the "translated_response_body" field.
+func (u *RequestExecutionUpsert) ClearTranslatedResponseBody() *RequestExecutionUpsert {
+	u.SetNull(requestexecution.FieldTranslatedResponseBody)
 	return u
 }
 
@@ -1135,6 +1163,27 @@ func (u *RequestExecutionUpsertOne) UpdateResponseBody() *RequestExecutionUpsert
 func (u *RequestExecutionUpsertOne) ClearResponseBody() *RequestExecutionUpsertOne {
 	return u.Update(func(s *RequestExecutionUpsert) {
 		s.ClearResponseBody()
+	})
+}
+
+// SetTranslatedResponseBody sets the "translated_response_body" field.
+func (u *RequestExecutionUpsertOne) SetTranslatedResponseBody(v objects.JSONRawMessage) *RequestExecutionUpsertOne {
+	return u.Update(func(s *RequestExecutionUpsert) {
+		s.SetTranslatedResponseBody(v)
+	})
+}
+
+// UpdateTranslatedResponseBody sets the "translated_response_body" field to the value that was provided on create.
+func (u *RequestExecutionUpsertOne) UpdateTranslatedResponseBody() *RequestExecutionUpsertOne {
+	return u.Update(func(s *RequestExecutionUpsert) {
+		s.UpdateTranslatedResponseBody()
+	})
+}
+
+// ClearTranslatedResponseBody clears the value of the "translated_response_body" field.
+func (u *RequestExecutionUpsertOne) ClearTranslatedResponseBody() *RequestExecutionUpsertOne {
+	return u.Update(func(s *RequestExecutionUpsert) {
+		s.ClearTranslatedResponseBody()
 	})
 }
 
@@ -1701,6 +1750,27 @@ func (u *RequestExecutionUpsertBulk) UpdateResponseBody() *RequestExecutionUpser
 func (u *RequestExecutionUpsertBulk) ClearResponseBody() *RequestExecutionUpsertBulk {
 	return u.Update(func(s *RequestExecutionUpsert) {
 		s.ClearResponseBody()
+	})
+}
+
+// SetTranslatedResponseBody sets the "translated_response_body" field.
+func (u *RequestExecutionUpsertBulk) SetTranslatedResponseBody(v objects.JSONRawMessage) *RequestExecutionUpsertBulk {
+	return u.Update(func(s *RequestExecutionUpsert) {
+		s.SetTranslatedResponseBody(v)
+	})
+}
+
+// UpdateTranslatedResponseBody sets the "translated_response_body" field to the value that was provided on create.
+func (u *RequestExecutionUpsertBulk) UpdateTranslatedResponseBody() *RequestExecutionUpsertBulk {
+	return u.Update(func(s *RequestExecutionUpsert) {
+		s.UpdateTranslatedResponseBody()
+	})
+}
+
+// ClearTranslatedResponseBody clears the value of the "translated_response_body" field.
+func (u *RequestExecutionUpsertBulk) ClearTranslatedResponseBody() *RequestExecutionUpsertBulk {
+	return u.Update(func(s *RequestExecutionUpsert) {
+		s.ClearTranslatedResponseBody()
 	})
 }
 

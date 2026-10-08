@@ -113,6 +113,24 @@ func (_u *RequestExecutionUpdate) ClearResponseBody() *RequestExecutionUpdate {
 	return _u
 }
 
+// SetTranslatedResponseBody sets the "translated_response_body" field.
+func (_u *RequestExecutionUpdate) SetTranslatedResponseBody(v objects.JSONRawMessage) *RequestExecutionUpdate {
+	_u.mutation.SetTranslatedResponseBody(v)
+	return _u
+}
+
+// AppendTranslatedResponseBody appends value to the "translated_response_body" field.
+func (_u *RequestExecutionUpdate) AppendTranslatedResponseBody(v objects.JSONRawMessage) *RequestExecutionUpdate {
+	_u.mutation.AppendTranslatedResponseBody(v)
+	return _u
+}
+
+// ClearTranslatedResponseBody clears the value of the "translated_response_body" field.
+func (_u *RequestExecutionUpdate) ClearTranslatedResponseBody() *RequestExecutionUpdate {
+	_u.mutation.ClearTranslatedResponseBody()
+	return _u
+}
+
 // SetResponseChunks sets the "response_chunks" field.
 func (_u *RequestExecutionUpdate) SetResponseChunks(v []objects.JSONRawMessage) *RequestExecutionUpdate {
 	_u.mutation.SetResponseChunks(v)
@@ -448,6 +466,17 @@ func (_u *RequestExecutionUpdate) sqlSave(ctx context.Context) (_node int, err e
 	if _u.mutation.ResponseBodyCleared() {
 		_spec.ClearField(requestexecution.FieldResponseBody, field.TypeJSON)
 	}
+	if value, ok := _u.mutation.TranslatedResponseBody(); ok {
+		_spec.SetField(requestexecution.FieldTranslatedResponseBody, field.TypeJSON, value)
+	}
+	if value, ok := _u.mutation.AppendedTranslatedResponseBody(); ok {
+		_spec.AddModifier(func(u *sql.UpdateBuilder) {
+			sqljson.Append(u, requestexecution.FieldTranslatedResponseBody, value)
+		})
+	}
+	if _u.mutation.TranslatedResponseBodyCleared() {
+		_spec.ClearField(requestexecution.FieldTranslatedResponseBody, field.TypeJSON)
+	}
 	if value, ok := _u.mutation.ResponseChunks(); ok {
 		_spec.SetField(requestexecution.FieldResponseChunks, field.TypeJSON, value)
 	}
@@ -625,6 +654,24 @@ func (_u *RequestExecutionUpdateOne) AppendResponseBody(v objects.JSONRawMessage
 // ClearResponseBody clears the value of the "response_body" field.
 func (_u *RequestExecutionUpdateOne) ClearResponseBody() *RequestExecutionUpdateOne {
 	_u.mutation.ClearResponseBody()
+	return _u
+}
+
+// SetTranslatedResponseBody sets the "translated_response_body" field.
+func (_u *RequestExecutionUpdateOne) SetTranslatedResponseBody(v objects.JSONRawMessage) *RequestExecutionUpdateOne {
+	_u.mutation.SetTranslatedResponseBody(v)
+	return _u
+}
+
+// AppendTranslatedResponseBody appends value to the "translated_response_body" field.
+func (_u *RequestExecutionUpdateOne) AppendTranslatedResponseBody(v objects.JSONRawMessage) *RequestExecutionUpdateOne {
+	_u.mutation.AppendTranslatedResponseBody(v)
+	return _u
+}
+
+// ClearTranslatedResponseBody clears the value of the "translated_response_body" field.
+func (_u *RequestExecutionUpdateOne) ClearTranslatedResponseBody() *RequestExecutionUpdateOne {
+	_u.mutation.ClearTranslatedResponseBody()
 	return _u
 }
 
@@ -992,6 +1039,17 @@ func (_u *RequestExecutionUpdateOne) sqlSave(ctx context.Context) (_node *Reques
 	}
 	if _u.mutation.ResponseBodyCleared() {
 		_spec.ClearField(requestexecution.FieldResponseBody, field.TypeJSON)
+	}
+	if value, ok := _u.mutation.TranslatedResponseBody(); ok {
+		_spec.SetField(requestexecution.FieldTranslatedResponseBody, field.TypeJSON, value)
+	}
+	if value, ok := _u.mutation.AppendedTranslatedResponseBody(); ok {
+		_spec.AddModifier(func(u *sql.UpdateBuilder) {
+			sqljson.Append(u, requestexecution.FieldTranslatedResponseBody, value)
+		})
+	}
+	if _u.mutation.TranslatedResponseBodyCleared() {
+		_spec.ClearField(requestexecution.FieldTranslatedResponseBody, field.TypeJSON)
 	}
 	if value, ok := _u.mutation.ResponseChunks(); ok {
 		_spec.SetField(requestexecution.FieldResponseChunks, field.TypeJSON, value)

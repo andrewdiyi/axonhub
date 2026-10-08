@@ -860,6 +860,16 @@ func ResponseBodyNotNil() predicate.RequestExecution {
 	return predicate.RequestExecution(sql.FieldNotNull(FieldResponseBody))
 }
 
+// TranslatedResponseBodyIsNil applies the IsNil predicate on the "translated_response_body" field.
+func TranslatedResponseBodyIsNil() predicate.RequestExecution {
+	return predicate.RequestExecution(sql.FieldIsNull(FieldTranslatedResponseBody))
+}
+
+// TranslatedResponseBodyNotNil applies the NotNil predicate on the "translated_response_body" field.
+func TranslatedResponseBodyNotNil() predicate.RequestExecution {
+	return predicate.RequestExecution(sql.FieldNotNull(FieldTranslatedResponseBody))
+}
+
 // ResponseChunksIsNil applies the IsNil predicate on the "response_chunks" field.
 func ResponseChunksIsNil() predicate.RequestExecution {
 	return predicate.RequestExecution(sql.FieldIsNull(FieldResponseChunks))

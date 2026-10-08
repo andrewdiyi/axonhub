@@ -54,6 +54,8 @@ type RequestExecution struct {
 	ResponseHeaders objects.JSONRawMessage `json:"response_headers,omitempty"`
 	// ResponseBody holds the value of the "response_body" field.
 	ResponseBody objects.JSONRawMessage `json:"response_body,omitempty"`
+	// Client-facing response body after translation, when translation is enabled
+	TranslatedResponseBody objects.JSONRawMessage `json:"translated_response_body,omitempty"`
 	// ResponseChunks holds the value of the "response_chunks" field.
 	ResponseChunks []objects.JSONRawMessage `json:"response_chunks,omitempty"`
 	// ErrorMessage holds the value of the "error_message" field.
@@ -135,7 +137,7 @@ func (*RequestExecution) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case requestexecution.FieldRequestBody, requestexecution.FieldResponseHeaders, requestexecution.FieldResponseBody, requestexecution.FieldResponseChunks, requestexecution.FieldRequestHeaders:
+		case requestexecution.FieldRequestBody, requestexecution.FieldResponseHeaders, requestexecution.FieldResponseBody, requestexecution.FieldTranslatedResponseBody, requestexecution.FieldResponseChunks, requestexecution.FieldRequestHeaders:
 			values[i] = new([]byte)
 		case requestexecution.FieldStream, requestexecution.FieldPassThroughApplied:
 			values[i] = new(sql.NullBool)
@@ -269,6 +271,14 @@ func (_m *RequestExecution) assignValues(columns []string, values []any) error {
 			} else if value != nil && len(*value) > 0 {
 				if err := json.Unmarshal(*value, &_m.ResponseBody); err != nil {
 					return fmt.Errorf("unmarshal field response_body: %w", err)
+				}
+			}
+		case requestexecution.FieldTranslatedResponseBody:
+			if value, ok := values[i].(*[]byte); !ok {
+				return fmt.Errorf("unexpected type %T for field translated_response_body", values[i])
+			} else if value != nil && len(*value) > 0 {
+				if err := json.Unmarshal(*value, &_m.TranslatedResponseBody); err != nil {
+					return fmt.Errorf("unmarshal field translated_response_body: %w", err)
 				}
 			}
 		case requestexecution.FieldResponseChunks:
@@ -449,6 +459,9 @@ func (_m *RequestExecution) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("response_body=")
 	builder.WriteString(fmt.Sprintf("%v", _m.ResponseBody))
+	builder.WriteString(", ")
+	builder.WriteString("translated_response_body=")
+	builder.WriteString(fmt.Sprintf("%v", _m.TranslatedResponseBody))
 	builder.WriteString(", ")
 	builder.WriteString("response_chunks=")
 	builder.WriteString(fmt.Sprintf("%v", _m.ResponseChunks))

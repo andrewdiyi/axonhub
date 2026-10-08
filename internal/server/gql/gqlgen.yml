@@ -688,6 +688,15 @@ models:
   UpdateVideoStorageSettingsInput:
     model:
       - github.com/looplj/axonhub/internal/server/biz.VideoStorageSettings
+  TranslationSettings:
+    model:
+      - github.com/looplj/axonhub/internal/server/biz.TranslationSettings
+  UpdateTranslationSettingsInput:
+    model:
+      - github.com/looplj/axonhub/internal/server/biz.TranslationSettings
+  TranslationScope:
+    model:
+      - github.com/looplj/axonhub/internal/objects.TranslationScope
   ProxyPreset:
     model:
       - github.com/looplj/axonhub/internal/server/biz.ProxyPreset

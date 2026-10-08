@@ -205,6 +205,34 @@ input UpdateSecuritySettingsInput {
   showRequestLogIPBanIcon: Boolean
 }
 
+enum TranslationScope {
+  system
+  developer
+  user
+  assistant
+  tool
+}
+
+type TranslationSettings {
+  enabled: Boolean!
+  modelID: String!
+  agentLanguage: String!
+  humanLanguage: String!
+  scopes: [TranslationScope!]!
+  incomingPromptTemplate: String!
+  outgoingPromptTemplate: String!
+}
+
+input UpdateTranslationSettingsInput {
+  enabled: Boolean
+  modelID: String
+  agentLanguage: String
+  humanLanguage: String
+  scopes: [TranslationScope!]
+  incomingPromptTemplate: String
+  outgoingPromptTemplate: String
+}
+
 type SystemModelSettings {
   fallbackToChannelsOnModelNotFound: Boolean!
   queryAllChannelModels: Boolean!
@@ -422,6 +450,7 @@ extend type Mutation {
   updateQuotaRoutingSettings(input: UpdateQuotaRoutingSettingsInput!): Boolean!
   updateProviderQuotaCollectionSettings(input: UpdateProviderQuotaCollectionSettingsInput!): Boolean!
   updateSecuritySettings(input: UpdateSecuritySettingsInput!): Boolean!
+  updateTranslationSettings(input: UpdateTranslationSettingsInput!): Boolean!
   checkProviderQuotas: Boolean!
   resetChannelQuotaNow(channelID: ID!): Boolean!
   triggerGcCleanup(input: TriggerGcCleanupInput!): Boolean!
@@ -497,6 +526,7 @@ extend type Query {
   quotaRoutingSettings: QuotaRoutingSettings!
   providerQuotaCollectionSettings: ProviderQuotaCollectionSettings!
   securitySettings: SecuritySettings!
+  translationSettings: TranslationSettings!
   proxyPresets: [ProxyPreset!]!
   userAgentPassThroughSettings: UserAgentPassThroughSettings!
   passThroughSettings: PassThroughSettings!

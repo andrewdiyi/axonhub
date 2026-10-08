@@ -49,6 +49,8 @@ const (
 	FieldResponseHeaders = "response_headers"
 	// FieldResponseBody holds the string denoting the response_body field in the database.
 	FieldResponseBody = "response_body"
+	// FieldTranslatedResponseBody holds the string denoting the translated_response_body field in the database.
+	FieldTranslatedResponseBody = "translated_response_body"
 	// FieldResponseChunks holds the string denoting the response_chunks field in the database.
 	FieldResponseChunks = "response_chunks"
 	// FieldErrorMessage holds the string denoting the error_message field in the database.
@@ -121,6 +123,7 @@ var Columns = []string{
 	FieldRequestBody,
 	FieldResponseHeaders,
 	FieldResponseBody,
+	FieldTranslatedResponseBody,
 	FieldResponseChunks,
 	FieldErrorMessage,
 	FieldResponseStatusCode,

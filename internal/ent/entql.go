@@ -455,6 +455,7 @@ var schemaGraph = func() *sqlgraph.Schema {
 			requestexecution.FieldRequestBody:                {Type: field.TypeJSON, Column: requestexecution.FieldRequestBody},
 			requestexecution.FieldResponseHeaders:            {Type: field.TypeJSON, Column: requestexecution.FieldResponseHeaders},
 			requestexecution.FieldResponseBody:               {Type: field.TypeJSON, Column: requestexecution.FieldResponseBody},
+			requestexecution.FieldTranslatedResponseBody:     {Type: field.TypeJSON, Column: requestexecution.FieldTranslatedResponseBody},
 			requestexecution.FieldResponseChunks:             {Type: field.TypeJSON, Column: requestexecution.FieldResponseChunks},
 			requestexecution.FieldErrorMessage:               {Type: field.TypeString, Column: requestexecution.FieldErrorMessage},
 			requestexecution.FieldResponseStatusCode:         {Type: field.TypeInt, Column: requestexecution.FieldResponseStatusCode},
@@ -3627,6 +3628,11 @@ func (f *RequestExecutionFilter) WhereResponseHeaders(p entql.BytesP) {
 // WhereResponseBody applies the entql json.RawMessage predicate on the response_body field.
 func (f *RequestExecutionFilter) WhereResponseBody(p entql.BytesP) {
 	f.Where(p.Field(requestexecution.FieldResponseBody))
+}
+
+// WhereTranslatedResponseBody applies the entql json.RawMessage predicate on the translated_response_body field.
+func (f *RequestExecutionFilter) WhereTranslatedResponseBody(p entql.BytesP) {
+	f.Where(p.Field(requestexecution.FieldTranslatedResponseBody))
 }
 
 // WhereResponseChunks applies the entql json.RawMessage predicate on the response_chunks field.

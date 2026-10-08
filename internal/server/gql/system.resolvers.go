@@ -235,6 +235,15 @@ func (r *mutationResolver) UpdateSecuritySettings(ctx context.Context, input Upd
 	return true, nil
 }
 
+// UpdateTranslationSettings is the resolver for the updateTranslationSettings field.
+func (r *mutationResolver) UpdateTranslationSettings(ctx context.Context, input biz.TranslationSettings) (bool, error) {
+	if err := r.systemService.SetTranslationSettings(ctx, input); err != nil {
+		return false, fmt.Errorf("failed to update translation settings: %w", err)
+	}
+
+	return true, nil
+}
+
 // CheckProviderQuotas is the resolver for the checkProviderQuotas field.
 func (r *mutationResolver) CheckProviderQuotas(ctx context.Context) (bool, error) {
 	if r.providerQuotaService == nil {
@@ -639,6 +648,11 @@ func (r *queryResolver) ProviderQuotaCollectionSettings(ctx context.Context) (*b
 // SecuritySettings is the resolver for the securitySettings field.
 func (r *queryResolver) SecuritySettings(ctx context.Context) (*biz.SecuritySettings, error) {
 	return r.systemService.SecuritySettings(ctx)
+}
+
+// TranslationSettings is the resolver for the translationSettings field.
+func (r *queryResolver) TranslationSettings(ctx context.Context) (*biz.TranslationSettings, error) {
+	return r.systemService.TranslationSettings(ctx)
 }
 
 // ProxyPresets is the resolver for the proxyPresets field.

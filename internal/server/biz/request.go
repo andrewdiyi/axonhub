@@ -513,6 +513,20 @@ func (s *RequestService) UpdateRequestExecutionResponseHeaders(ctx context.Conte
 	return err
 }
 
+// UpdateRequestExecutionTranslatedResponseBody records the client-facing response
+// body after automatic translation, alongside the original (pre-translation)
+// response_body already persisted by UpdateRequestExecutionFinalized. Respects the
+// same storage policy as the main response body.
+func (s *RequestService) UpdateRequestExecutionTranslatedResponseBody(ctx context.Context, executionID int, body objects.JSONRawMessage) error {
+	if policy, err := s.SystemService.StoragePolicy(ctx); err == nil && !policy.StoreResponseBody {
+		return nil
+	}
+
+	_, err := s.entFromContext(ctx).RequestExecution.UpdateOneID(executionID).SetTranslatedResponseBody(body).Save(ctx)
+
+	return err
+}
+
 func (s *RequestService) responseHeadersForStorage(ctx context.Context, headers http.Header) (objects.JSONRawMessage, error) {
 	if len(headers) == 0 {
 		return nil, nil

@@ -19222,6 +19222,8 @@ type RequestExecutionMutation struct {
 	appendresponse_headers            objects.JSONRawMessage
 	response_body                     *objects.JSONRawMessage
 	appendresponse_body               objects.JSONRawMessage
+	translated_response_body          *objects.JSONRawMessage
+	appendtranslated_response_body    objects.JSONRawMessage
 	response_chunks                   *[]objects.JSONRawMessage
 	appendresponse_chunks             []objects.JSONRawMessage
 	error_message                     *string
@@ -20130,6 +20132,71 @@ func (m *RequestExecutionMutation) ResetResponseBody() {
 	delete(m.clearedFields, requestexecution.FieldResponseBody)
 }
 
+// SetTranslatedResponseBody sets the "translated_response_body" field.
+func (m *RequestExecutionMutation) SetTranslatedResponseBody(orm objects.JSONRawMessage) {
+	m.translated_response_body = &orm
+	m.appendtranslated_response_body = nil
+}
+
+// TranslatedResponseBody returns the value of the "translated_response_body" field in the mutation.
+func (m *RequestExecutionMutation) TranslatedResponseBody() (r objects.JSONRawMessage, exists bool) {
+	v := m.translated_response_body
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldTranslatedResponseBody returns the old "translated_response_body" field's value of the RequestExecution entity.
+// If the RequestExecution object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RequestExecutionMutation) OldTranslatedResponseBody(ctx context.Context) (v objects.JSONRawMessage, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldTranslatedResponseBody is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldTranslatedResponseBody requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldTranslatedResponseBody: %w", err)
+	}
+	return oldValue.TranslatedResponseBody, nil
+}
+
+// AppendTranslatedResponseBody adds orm to the "translated_response_body" field.
+func (m *RequestExecutionMutation) AppendTranslatedResponseBody(orm objects.JSONRawMessage) {
+	m.appendtranslated_response_body = append(m.appendtranslated_response_body, orm...)
+}
+
+// AppendedTranslatedResponseBody returns the list of values that were appended to the "translated_response_body" field in this mutation.
+func (m *RequestExecutionMutation) AppendedTranslatedResponseBody() (objects.JSONRawMessage, bool) {
+	if len(m.appendtranslated_response_body) == 0 {
+		return nil, false
+	}
+	return m.appendtranslated_response_body, true
+}
+
+// ClearTranslatedResponseBody clears the value of the "translated_response_body" field.
+func (m *RequestExecutionMutation) ClearTranslatedResponseBody() {
+	m.translated_response_body = nil
+	m.appendtranslated_response_body = nil
+	m.clearedFields[requestexecution.FieldTranslatedResponseBody] = struct{}{}
+}
+
+// TranslatedResponseBodyCleared returns if the "translated_response_body" field was cleared in this mutation.
+func (m *RequestExecutionMutation) TranslatedResponseBodyCleared() bool {
+	_, ok := m.clearedFields[requestexecution.FieldTranslatedResponseBody]
+	return ok
+}
+
+// ResetTranslatedResponseBody resets all changes to the "translated_response_body" field.
+func (m *RequestExecutionMutation) ResetTranslatedResponseBody() {
+	m.translated_response_body = nil
+	m.appendtranslated_response_body = nil
+	delete(m.clearedFields, requestexecution.FieldTranslatedResponseBody)
+}
+
 // SetResponseChunks sets the "response_chunks" field.
 func (m *RequestExecutionMutation) SetResponseChunks(orm []objects.JSONRawMessage) {
 	m.response_chunks = &orm
@@ -20861,7 +20928,7 @@ func (m *RequestExecutionMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *RequestExecutionMutation) Fields() []string {
-	fields := make([]string, 0, 27)
+	fields := make([]string, 0, 28)
 	if m.created_at != nil {
 		fields = append(fields, requestexecution.FieldCreatedAt)
 	}
@@ -20909,6 +20976,9 @@ func (m *RequestExecutionMutation) Fields() []string {
 	}
 	if m.response_body != nil {
 		fields = append(fields, requestexecution.FieldResponseBody)
+	}
+	if m.translated_response_body != nil {
+		fields = append(fields, requestexecution.FieldTranslatedResponseBody)
 	}
 	if m.response_chunks != nil {
 		fields = append(fields, requestexecution.FieldResponseChunks)
@@ -20983,6 +21053,8 @@ func (m *RequestExecutionMutation) Field(name string) (ent.Value, bool) {
 		return m.ResponseHeaders()
 	case requestexecution.FieldResponseBody:
 		return m.ResponseBody()
+	case requestexecution.FieldTranslatedResponseBody:
+		return m.TranslatedResponseBody()
 	case requestexecution.FieldResponseChunks:
 		return m.ResponseChunks()
 	case requestexecution.FieldErrorMessage:
@@ -21046,6 +21118,8 @@ func (m *RequestExecutionMutation) OldField(ctx context.Context, name string) (e
 		return m.OldResponseHeaders(ctx)
 	case requestexecution.FieldResponseBody:
 		return m.OldResponseBody(ctx)
+	case requestexecution.FieldTranslatedResponseBody:
+		return m.OldTranslatedResponseBody(ctx)
 	case requestexecution.FieldResponseChunks:
 		return m.OldResponseChunks(ctx)
 	case requestexecution.FieldErrorMessage:
@@ -21188,6 +21262,13 @@ func (m *RequestExecutionMutation) SetField(name string, value ent.Value) error 
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetResponseBody(v)
+		return nil
+	case requestexecution.FieldTranslatedResponseBody:
+		v, ok := value.(objects.JSONRawMessage)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetTranslatedResponseBody(v)
 		return nil
 	case requestexecution.FieldResponseChunks:
 		v, ok := value.([]objects.JSONRawMessage)
@@ -21398,6 +21479,9 @@ func (m *RequestExecutionMutation) ClearedFields() []string {
 	if m.FieldCleared(requestexecution.FieldResponseBody) {
 		fields = append(fields, requestexecution.FieldResponseBody)
 	}
+	if m.FieldCleared(requestexecution.FieldTranslatedResponseBody) {
+		fields = append(fields, requestexecution.FieldTranslatedResponseBody)
+	}
 	if m.FieldCleared(requestexecution.FieldResponseChunks) {
 		fields = append(fields, requestexecution.FieldResponseChunks)
 	}
@@ -21462,6 +21546,9 @@ func (m *RequestExecutionMutation) ClearField(name string) error {
 		return nil
 	case requestexecution.FieldResponseBody:
 		m.ClearResponseBody()
+		return nil
+	case requestexecution.FieldTranslatedResponseBody:
+		m.ClearTranslatedResponseBody()
 		return nil
 	case requestexecution.FieldResponseChunks:
 		m.ClearResponseChunks()
@@ -21542,6 +21629,9 @@ func (m *RequestExecutionMutation) ResetField(name string) error {
 		return nil
 	case requestexecution.FieldResponseBody:
 		m.ResetResponseBody()
+		return nil
+	case requestexecution.FieldTranslatedResponseBody:
+		m.ResetTranslatedResponseBody()
 		return nil
 	case requestexecution.FieldResponseChunks:
 		m.ResetResponseChunks()

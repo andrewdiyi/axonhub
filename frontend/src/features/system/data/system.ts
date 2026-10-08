@@ -268,6 +268,28 @@ export interface UpdateSecuritySettingsInput {
   showRequestLogIPBanIcon?: boolean;
 }
 
+export type TranslationScope = 'system' | 'developer' | 'user' | 'assistant' | 'tool';
+
+export interface TranslationSettings {
+  enabled: boolean;
+  modelID: string;
+  agentLanguage: string;
+  humanLanguage: string;
+  scopes: TranslationScope[];
+  incomingPromptTemplate: string;
+  outgoingPromptTemplate: string;
+}
+
+export interface UpdateTranslationSettingsInput {
+  enabled?: boolean;
+  modelID?: string;
+  agentLanguage?: string;
+  humanLanguage?: string;
+  scopes?: TranslationScope[];
+  incomingPromptTemplate?: string;
+  outgoingPromptTemplate?: string;
+}
+
 export interface StoragePolicy {
   storeChunks: boolean;
   livePreview: boolean;
@@ -965,6 +987,26 @@ const UPDATE_SECURITY_SETTINGS_MUTATION = `
   }
 `;
 
+const TRANSLATION_SETTINGS_QUERY = `
+  query TranslationSettings {
+    translationSettings {
+      enabled
+      modelID
+      agentLanguage
+      humanLanguage
+      scopes
+      incomingPromptTemplate
+      outgoingPromptTemplate
+    }
+  }
+`;
+
+const UPDATE_TRANSLATION_SETTINGS_MUTATION = `
+  mutation UpdateTranslationSettings($input: UpdateTranslationSettingsInput!) {
+    updateTranslationSettings(input: $input)
+  }
+`;
+
 export interface ModelSettings {
   fallbackToChannelsOnModelNotFound: boolean;
   queryAllChannelModels: boolean;
@@ -1208,6 +1250,43 @@ export function useUpdateSecuritySettings() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['securitySettings'] });
+      toast.success(i18n.t('common.success.systemUpdated'));
+    },
+    onError: () => {
+      toast.error(i18n.t('common.errors.systemUpdateFailed'));
+    },
+  });
+}
+
+export function useTranslationSettings() {
+  const { handleError } = useErrorHandler();
+  const { hasSystemScope } = usePermissions();
+
+  return useQuery({
+    queryKey: ['translationSettings'],
+    enabled: hasSystemScope('read_settings'),
+    queryFn: async () => {
+      try {
+        const data = await graphqlRequest<{ translationSettings: TranslationSettings }>(TRANSLATION_SETTINGS_QUERY);
+        return data.translationSettings;
+      } catch (error) {
+        handleError(error, i18n.t('common.errors.internalServerError'));
+        throw error;
+      }
+    },
+  });
+}
+
+export function useUpdateTranslationSettings() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (input: UpdateTranslationSettingsInput) => {
+      const data = await graphqlRequest<{ updateTranslationSettings: boolean }>(UPDATE_TRANSLATION_SETTINGS_MUTATION, { input });
+      return data.updateTranslationSettings;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['translationSettings'] });
       toast.success(i18n.t('common.success.systemUpdated'));
     },
     onError: () => {

@@ -132,6 +132,11 @@ const (
 	// SystemKeySecuritySettings is the key used to store security settings.
 	// The value is JSON-encoded SecuritySettings struct.
 	SystemKeySecuritySettings = "security_settings"
+
+	// SystemKeyTranslationSettings is the key used to store the automatic
+	// request/response translation configuration.
+	// The value is JSON-encoded TranslationSettings struct.
+	SystemKeyTranslationSettings = "system_translation_settings"
 )
 
 // SystemGeneralSettings represents general system configuration settings.
@@ -139,6 +144,35 @@ type SystemGeneralSettings struct {
 	// CurrencyCode is the code used for currency display (e.g., USD, CNY).
 	CurrencyCode string `json:"currency_code"`
 	Timezone     string `json:"timezone"`
+}
+
+// TranslationSettings represents gateway-level automatic message translation
+// configuration. When enabled, both the incoming request (toward AgentLanguage)
+// and the outgoing response (toward HumanLanguage) are translated through the
+// configured gateway model before being forwarded/returned.
+type TranslationSettings struct {
+	Enabled bool `json:"enabled"`
+
+	// ModelID is the gateway Model.modelID used to perform translation.
+	// Plain string reference (no ent edge), matching how PromptProtectionRule
+	// and other settings reference models.
+	ModelID string `json:"model_id"`
+
+	// AgentLanguage is the target language for the incoming (request) direction,
+	// e.g. "English". Free-text, not a locale code.
+	AgentLanguage string `json:"agent_language"`
+	// HumanLanguage is the target language for the outgoing (response) direction,
+	// e.g. "Simplified Chinese". Free-text, not a locale code.
+	HumanLanguage string `json:"human_language"`
+
+	// Scopes controls which message roles get translated.
+	Scopes []objects.TranslationScope `json:"scopes,omitempty"`
+
+	// IncomingPromptTemplate/OutgoingPromptTemplate are optional custom prompt
+	// templates for each direction. Empty means use the built-in default prompt.
+	// Supported placeholders: {Text}, {TargetLanguage}.
+	IncomingPromptTemplate string `json:"incoming_prompt_template,omitempty"`
+	OutgoingPromptTemplate string `json:"outgoing_prompt_template,omitempty"`
 }
 
 // VideoStorageSettings represents system settings for persisting generated videos.
@@ -1583,6 +1617,53 @@ func (s *SystemService) SetGeneralSettings(ctx context.Context, settings SystemG
 	s.mu.Lock()
 	s.timeLocation = nil
 	s.mu.Unlock()
+
+	return nil
+}
+
+// TranslationSettings retrieves the automatic translation settings.
+func (s *SystemService) TranslationSettings(ctx context.Context) (*TranslationSettings, error) {
+	value, err := s.getSystemValue(ctx, SystemKeyTranslationSettings)
+	if err != nil {
+		if ent.IsNotFound(err) {
+			return lo.ToPtr(defaultTranslationSettings), nil
+		}
+
+		return nil, fmt.Errorf("failed to get translation settings: %w", err)
+	}
+
+	var settings TranslationSettings
+	if err := json.Unmarshal([]byte(value), &settings); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal translation settings: %w", err)
+	}
+
+	return &settings, nil
+}
+
+// TranslationSettingsOrDefault retrieves the translation settings or returns the
+// default. Orchestrator middlewares must never fail a request on a settings-read
+// error, so they should use this instead of TranslationSettings.
+func (s *SystemService) TranslationSettingsOrDefault(ctx context.Context) *TranslationSettings {
+	settings, err := s.TranslationSettings(ctx)
+	if err != nil {
+		log.Warn(ctx, "failed to get translation settings", log.Cause(err))
+
+		return lo.ToPtr(defaultTranslationSettings)
+	}
+
+	return settings
+}
+
+// SetTranslationSettings sets the automatic translation settings.
+func (s *SystemService) SetTranslationSettings(ctx context.Context, settings TranslationSettings) error {
+	jsonBytes, err := json.Marshal(settings)
+	if err != nil {
+		return fmt.Errorf("failed to marshal translation settings: %w", err)
+	}
+
+	if err := s.setSystemValue(ctx, SystemKeyTranslationSettings, string(jsonBytes)); err != nil {
+		return fmt.Errorf("failed to set translation settings: %w", err)
+	}
 
 	return nil
 }

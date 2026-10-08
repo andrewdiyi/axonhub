@@ -110,6 +110,13 @@ func (RequestExecution) Fields() []ent.Field {
 		field.JSON("response_body", objects.JSONRawMessage{}).Optional().Annotations(
 			entgql.Directives(forceResolver()),
 		),
+		// The client-facing response body after automatic translation, when
+		// translation is enabled. Null/empty when translation was not applied to
+		// this execution. response_body above continues to hold the original,
+		// pre-translation provider response for audit purposes.
+		field.JSON("translated_response_body", objects.JSONRawMessage{}).
+			Optional().
+			Comment("Client-facing response body after translation, when translation is enabled"),
 		// The streaming response chunks from the provider.
 		// e.g: the provider response with Claude format, and the user expects the response with OpenAI format, the response_chunks is the Claude response format.
 		field.JSON("response_chunks", []objects.JSONRawMessage{}).Optional().Annotations(

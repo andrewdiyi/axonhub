@@ -4677,6 +4677,10 @@ type RequestExecution implements Node {
   """
   responseHeaders: JSONRawMessage
   responseBody: JSONRawMessage @goField(forceResolver: true)
+  """
+  Client-facing response body after translation, when translation is enabled
+  """
+  translatedResponseBody: JSONRawMessage
   responseChunks: [JSONRawMessage!] @goField(forceResolver: true)
   errorMessage: String
   """

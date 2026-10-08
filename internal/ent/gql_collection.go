@@ -4086,6 +4086,11 @@ func (_q *RequestExecutionQuery) collectField(ctx context.Context, oneNode bool,
 				selectedFields = append(selectedFields, requestexecution.FieldResponseBody)
 				fieldSeen[requestexecution.FieldResponseBody] = struct{}{}
 			}
+		case "translatedResponseBody":
+			if _, ok := fieldSeen[requestexecution.FieldTranslatedResponseBody]; !ok {
+				selectedFields = append(selectedFields, requestexecution.FieldTranslatedResponseBody)
+				fieldSeen[requestexecution.FieldTranslatedResponseBody] = struct{}{}
+			}
 		case "responseChunks":
 			if _, ok := fieldSeen[requestexecution.FieldResponseChunks]; !ok {
 				selectedFields = append(selectedFields, requestexecution.FieldResponseChunks)
