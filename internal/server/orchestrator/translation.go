@@ -54,6 +54,16 @@ func (m *translationMiddleware) OnInboundLlmRequest(ctx context.Context, request
 		return request, nil
 	}
 
+	// Skip requests that constrain the response to a structured format. These are
+	// not free-form conversation turns: an agent harness uses them for internal
+	// jobs such as generating a task title, where the user-visible text is
+	// incidental context and the reply must satisfy a JSON schema. Translating
+	// such a request costs a full round trip, produces a translation that no
+	// longer fits the schema's intent, and leaves the reply untranslatable back.
+	if hasStructuredOutputConstraint(request) {
+		return request, nil
+	}
+
 	index := lastScopedMessageIndex(request.Messages, settings.Scopes)
 	if index < 0 {
 		return request, nil
@@ -92,6 +102,12 @@ func (m *translationMiddleware) OnOutboundLlmResponse(ctx context.Context, respo
 	state := m.outbound.state
 	settings := state.SystemService.TranslationSettingsOrDefault(ctx)
 	if !settings.Enabled || settings.ChannelID == 0 || settings.Model == "" {
+		return response, nil
+	}
+
+	// Mirror the inbound skip: a structured-output request's reply is machine
+	// data (e.g. {"title": ...}), not human prose, so it must not be translated.
+	if state.LlmRequest != nil && hasStructuredOutputConstraint(state.LlmRequest) {
 		return response, nil
 	}
 
@@ -145,6 +161,12 @@ func (m *translationMiddleware) OnOutboundLlmStream(ctx context.Context, stream 
 	state := m.outbound.state
 	settings := state.SystemService.TranslationSettingsOrDefault(ctx)
 	if !settings.Enabled || settings.ChannelID == 0 || settings.Model == "" {
+		return stream, nil
+	}
+
+	// Mirror the inbound skip: a structured-output request's reply is machine
+	// data (e.g. {"title": ...}), not human prose, so it must not be translated.
+	if state.LlmRequest != nil && hasStructuredOutputConstraint(state.LlmRequest) {
 		return stream, nil
 	}
 
@@ -366,6 +388,19 @@ func translateMessageContent(ctx context.Context, caller *translationCaller, msg
 	}
 
 	return nil
+}
+
+// hasStructuredOutputConstraint reports whether the request forces a structured
+// response format (JSON object / JSON schema). Such requests are agent-harness
+// internal jobs (e.g. generating a task title), not free-form conversation, and
+// translating either direction is meaningless or harmful. "text" is the normal
+// prose format and is not a constraint.
+func hasStructuredOutputConstraint(request *llm.Request) bool {
+	if request == nil || request.ResponseFormat == nil {
+		return false
+	}
+
+	return request.ResponseFormat.Type != "" && request.ResponseFormat.Type != "text"
 }
 
 // lastScopedMessageIndex returns the index of the most recent message whose
