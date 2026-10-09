@@ -55,6 +55,13 @@ func (p *PersistentOutboundTransformer) isPassThroughEnabled(ctx context.Context
 		return false
 	}
 
+	// Translation rewrites the unified request text, but pass-through replays the
+	// client's original raw bytes. Falling through to pass-through would silently
+	// send the untranslated original upstream, so translation takes precedence.
+	if p.state.TranslationApplied {
+		return false
+	}
+
 	if !passThroughStreamAligned(p.state.OriginalRequestStream, llmReq.Stream) {
 		return false
 	}

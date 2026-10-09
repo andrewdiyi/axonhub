@@ -59,9 +59,18 @@ func (m *translationMiddleware) OnInboundLlmRequest(ctx context.Context, request
 		return request, nil
 	}
 
+	original := messageTextFingerprint(&request.Messages[index])
+
 	if err := translateMessageContent(ctx, caller, &request.Messages[index], settings.ChannelID, settings.Model, settings.IncomingPromptTemplate, settings.AgentLanguage); err != nil {
 		log.Warn(ctx, "failed to translate incoming request, passing through original text", log.Cause(err))
 		return request, nil
+	}
+
+	// Only suppress body pass-through when the text actually changed. A no-op
+	// (translation returned the same text, or the message had no text) must not
+	// disable pass-through for requests that never needed translating.
+	if messageTextFingerprint(&request.Messages[index]) != original {
+		m.inbound.state.TranslationApplied = true
 	}
 
 	return request, nil
@@ -369,6 +378,29 @@ func lastScopedMessageIndex(messages []llm.Message, scopes []objects.Translation
 	}
 
 	return -1
+}
+
+// messageTextFingerprint returns the message's translatable text segments joined
+// into one string, used to detect whether translation actually changed anything.
+func messageTextFingerprint(msg *llm.Message) string {
+	var builder strings.Builder
+
+	if msg.Content.Content != nil {
+		builder.WriteString(*msg.Content.Content)
+		builder.WriteByte(0)
+	}
+
+	for i := range msg.Content.MultipleContent {
+		part := &msg.Content.MultipleContent[i]
+		if !strings.EqualFold(part.Type, "text") || part.Text == nil {
+			continue
+		}
+
+		builder.WriteString(*part.Text)
+		builder.WriteByte(0)
+	}
+
+	return builder.String()
 }
 
 // translationScopeMatches reports whether role is configured for translation.

@@ -48,6 +48,14 @@ type PersistenceState struct {
 	// snapshot using the actual inbound mapping, including legacy protectors.
 	PromptProtectionBodyCheck *promptProtectionBodyCheck
 
+	// TranslationApplied records that automatic translation changed the inbound
+	// request text. When set, body pass-through must be disabled: pass-through
+	// replays the client's original raw bytes, which would silently discard the
+	// translated text and send the original language upstream. The existing
+	// prompt-protection raw patching only carries mask rules, not the rewritten
+	// prompt snapshot, so it cannot preserve a translation.
+	TranslationApplied bool
+
 	// Persistence state
 	Request     *ent.Request
 	RequestExec *ent.RequestExecution
