@@ -310,14 +310,19 @@ func persistTranslatedResponse(ctx context.Context, state *PersistenceState, res
 
 // translateMessageContent translates a message's text content in place,
 // covering both the scalar Content and "text"-typed MultipleContent parts.
+// All text segments in the message are translated in a single model call
+// (see translateSegments) rather than one call per segment.
 func translateMessageContent(ctx context.Context, caller *translationCaller, msg *llm.Message, channelID int, model, promptTemplate, targetLanguage string) error {
-	if msg.Content.Content != nil {
-		translated, err := caller.translate(ctx, channelID, model, *msg.Content.Content, promptTemplate, targetLanguage)
-		if err != nil {
-			return err
-		}
+	// Collect the segments in message order: scalar Content first, then text parts.
+	var (
+		segments       []string
+		contentSegment *string
+		partSegments   []*string
+	)
 
-		msg.Content.Content = &translated
+	if msg.Content.Content != nil {
+		contentSegment = msg.Content.Content
+		segments = append(segments, *contentSegment)
 	}
 
 	for i := range msg.Content.MultipleContent {
@@ -326,12 +331,29 @@ func translateMessageContent(ctx context.Context, caller *translationCaller, msg
 			continue
 		}
 
-		translated, err := caller.translate(ctx, channelID, model, *part.Text, promptTemplate, targetLanguage)
-		if err != nil {
-			return err
-		}
+		partSegments = append(partSegments, part.Text)
+		segments = append(segments, *part.Text)
+	}
 
-		part.Text = &translated
+	if len(segments) == 0 {
+		return nil
+	}
+
+	translated, err := caller.translateSegments(ctx, channelID, model, segments, promptTemplate, targetLanguage)
+	if err != nil {
+		return err
+	}
+
+	index := 0
+
+	if contentSegment != nil {
+		*contentSegment = translated[0]
+		index = 1
+	}
+
+	for _, part := range partSegments {
+		*part = translated[index]
+		index++
 	}
 
 	return nil

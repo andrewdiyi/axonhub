@@ -129,15 +129,70 @@ func renderTranslationPrompt(template, text, targetLanguage string) string {
 	return rendered
 }
 
+// translationSegmentSeparator joins multiple text segments of one message into
+// a single translation call. It is deliberately verbose and improbable in
+// natural text so the model preserves it verbatim.
+const translationSegmentSeparator = "\n<<<AXONHUB_TRANSLATION_SEGMENT>>>\n"
+
+const translationSegmentInstruction = "\n\nThe text contains multiple parts separated by lines containing only " +
+	"<<<AXONHUB_TRANSLATION_SEGMENT>>>. Translate each part. Keep every separator line exactly as-is, " +
+	"in the same order and count. Do not add, remove, or translate the separator."
+
+// translateSegments translates several text segments of one message in a single
+// model call, joining them with a separator and splitting the result back apart.
+// This avoids one round trip (and one logged sub-request) per text part. If the
+// model drops or duplicates the separator, it falls back to translating each
+// segment individually so the message is never left partially translated.
+func (c *translationCaller) translateSegments(ctx context.Context, channelID int, model string, segments []string, promptTemplate, targetLanguage string) ([]string, error) {
+	if len(segments) == 1 {
+		translated, err := c.translate(ctx, channelID, model, segments[0], promptTemplate, targetLanguage)
+		if err != nil {
+			return nil, err
+		}
+
+		return []string{translated}, nil
+	}
+
+	joined := strings.Join(segments, translationSegmentSeparator)
+
+	translated, err := c.translateWithInstruction(ctx, channelID, model, joined, promptTemplate, targetLanguage, translationSegmentInstruction)
+	if err == nil {
+		parts := strings.Split(translated, translationSegmentSeparator)
+		if len(parts) == len(segments) {
+			return parts, nil
+		}
+	}
+
+	// Separator lost or duplicated: translate each segment on its own.
+	result := make([]string, len(segments))
+
+	for i, segment := range segments {
+		one, singleErr := c.translate(ctx, channelID, model, segment, promptTemplate, targetLanguage)
+		if singleErr != nil {
+			return nil, singleErr
+		}
+
+		result[i] = one
+	}
+
+	return result, nil
+}
+
 // translate calls the model configured for channelID with a single user-turn
 // prompt and returns the translated text. Returns the original text
 // unchanged for empty input, without calling the model.
 func (c *translationCaller) translate(ctx context.Context, channelID int, model, text, promptTemplate, targetLanguage string) (string, error) {
+	return c.translateWithInstruction(ctx, channelID, model, text, promptTemplate, targetLanguage, "")
+}
+
+// translateWithInstruction is translate with an optional extra instruction
+// appended to the prompt, used for the multi-segment separator protocol.
+func (c *translationCaller) translateWithInstruction(ctx context.Context, channelID int, model, text, promptTemplate, targetLanguage, extraInstruction string) (string, error) {
 	if strings.TrimSpace(text) == "" {
 		return text, nil
 	}
 
-	prompt := renderTranslationPrompt(promptTemplate, text, targetLanguage)
+	prompt := renderTranslationPrompt(promptTemplate, text, targetLanguage) + extraInstruction
 
 	req := &llm.Request{
 		Model: model,
