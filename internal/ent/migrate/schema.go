@@ -540,7 +540,7 @@ var (
 		{Name: "created_at", Type: field.TypeTime, Default: schema.Expr("CURRENT_TIMESTAMP")},
 		{Name: "updated_at", Type: field.TypeTime, Default: schema.Expr("CURRENT_TIMESTAMP")},
 		{Name: "user_id", Type: field.TypeInt, Nullable: true},
-		{Name: "source", Type: field.TypeEnum, Enums: []string{"api", "playground", "test"}, Default: "api"},
+		{Name: "source", Type: field.TypeEnum, Enums: []string{"api", "playground", "test", "translation"}, Default: "api"},
 		{Name: "model_id", Type: field.TypeString},
 		{Name: "reasoning_effort", Type: field.TypeString, Nullable: true},
 		{Name: "format", Type: field.TypeString, Default: "openai/chat_completions"},

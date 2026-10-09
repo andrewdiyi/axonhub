@@ -8,6 +8,7 @@ import (
 
 	"github.com/looplj/axonhub/internal/log"
 	"github.com/looplj/axonhub/internal/objects"
+	"github.com/looplj/axonhub/internal/server/biz"
 	"github.com/looplj/axonhub/llm"
 	"github.com/looplj/axonhub/llm/pipeline"
 	"github.com/looplj/axonhub/llm/streams"
@@ -54,13 +55,16 @@ func (m *translationMiddleware) OnInboundLlmRequest(ctx context.Context, request
 		return request, nil
 	}
 
-	// Skip requests that constrain the response to a structured format. These are
-	// not free-form conversation turns: an agent harness uses them for internal
-	// jobs such as generating a task title, where the user-visible text is
-	// incidental context and the reply must satisfy a JSON schema. Translating
-	// such a request costs a full round trip, produces a translation that no
-	// longer fits the schema's intent, and leaves the reply untranslatable back.
+	// Structured-output requests are agent-harness internal jobs (e.g. generating
+	// a task title) that embed the user's text after a marker inside a larger,
+	// English instruction block. Translating the whole message would garble the
+	// instructions (observed: the model echoed the instructions back instead of
+	// translating), so only the embedded user text is translated.
 	if hasStructuredOutputConstraint(request) {
+		if translateStructuredOutputTail(ctx, caller, request, settings) {
+			m.inbound.state.TranslationApplied = true
+		}
+
 		return request, nil
 	}
 
@@ -105,8 +109,10 @@ func (m *translationMiddleware) OnOutboundLlmResponse(ctx context.Context, respo
 		return response, nil
 	}
 
-	// Mirror the inbound skip: a structured-output request's reply is machine
-	// data (e.g. {"title": ...}), not human prose, so it must not be translated.
+	// Structured-output replies are machine data (e.g. {"title": ...}) shaped by a
+	// JSON schema, not prose. Only the request's embedded user text is translated
+	// (see translateStructuredOutputTail); the reply is left as the harness's
+	// schema-compliant original.
 	if state.LlmRequest != nil && hasStructuredOutputConstraint(state.LlmRequest) {
 		return response, nil
 	}
@@ -164,8 +170,9 @@ func (m *translationMiddleware) OnOutboundLlmStream(ctx context.Context, stream 
 		return stream, nil
 	}
 
-	// Mirror the inbound skip: a structured-output request's reply is machine
-	// data (e.g. {"title": ...}), not human prose, so it must not be translated.
+	// Translating a structured-output reply would break its JSON schema, so only
+	// the request's embedded user text is translated (see
+	// translateStructuredOutputTail); the reply is left untouched.
 	if state.LlmRequest != nil && hasStructuredOutputConstraint(state.LlmRequest) {
 		return stream, nil
 	}
@@ -388,6 +395,79 @@ func translateMessageContent(ctx context.Context, caller *translationCaller, msg
 	}
 
 	return nil
+}
+
+// structuredOutputUserPromptMarker is the label an agent harness inserts before
+// the user's own text in a structured-output request. Only that trailing span is
+// user content; everything before it is harness instruction.
+const structuredOutputUserPromptMarker = "User prompt:"
+
+// translateStructuredOutputTail translates the user text embedded after
+// structuredOutputUserPromptMarker in a structured-output request's last scoped
+// message, leaving the surrounding harness instructions untouched. Returns true
+// when the text actually changed. Best-effort: any failure leaves the request
+// unmodified so the harness job still runs on the original text.
+func translateStructuredOutputTail(ctx context.Context, caller *translationCaller, request *llm.Request, settings *biz.TranslationSettings) bool {
+	index := lastScopedMessageIndex(request.Messages, settings.Scopes)
+	if index < 0 {
+		return false
+	}
+
+	msg := &request.Messages[index]
+
+	translateTail := func(segment *string) (string, bool) {
+		if segment == nil {
+			return "", false
+		}
+
+		markerIndex := strings.LastIndex(*segment, structuredOutputUserPromptMarker)
+		if markerIndex < 0 {
+			return "", false
+		}
+
+		head := (*segment)[:markerIndex+len(structuredOutputUserPromptMarker)]
+		tail := (*segment)[markerIndex+len(structuredOutputUserPromptMarker):]
+
+		if strings.TrimSpace(tail) == "" {
+			return "", false
+		}
+
+		translated, err := caller.translate(ctx, settings.ChannelID, settings.Model, tail, settings.IncomingPromptTemplate, settings.AgentLanguage)
+		if err != nil {
+			log.Warn(ctx, "failed to translate structured-output user prompt, keeping original", log.Cause(err))
+			return "", false
+		}
+
+		if translated == tail {
+			return "", false
+		}
+
+		*segment = head + translated
+
+		return *segment, true
+	}
+
+	if msg.Content.Content != nil {
+		if updated, changed := translateTail(msg.Content.Content); changed {
+			msg.Content.Content = &updated
+
+			return true
+		}
+	}
+
+	changed := false
+	for i := range msg.Content.MultipleContent {
+		part := &msg.Content.MultipleContent[i]
+		if !strings.EqualFold(part.Type, "text") {
+			continue
+		}
+
+		if _, partChanged := translateTail(part.Text); partChanged {
+			changed = true
+		}
+	}
+
+	return changed
 }
 
 // hasStructuredOutputConstraint reports whether the request forces a structured

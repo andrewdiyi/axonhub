@@ -5082,6 +5082,7 @@ enum RequestSource @goModel(model: "github.com/looplj/axonhub/internal/ent/reque
   api
   playground
   test
+  translation
 }
 """
 RequestStatus is enum for the field status

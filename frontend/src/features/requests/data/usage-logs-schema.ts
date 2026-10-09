@@ -3,7 +3,7 @@ import { pageInfoSchema } from '@/gql/pagination';
 import { channelSchema } from '@/features/channels/data';
 
 // Usage Log Source
-export const usageLogSourceSchema = z.enum(['api', 'playground', 'test']);
+export const usageLogSourceSchema = z.enum(['api', 'playground', 'test', 'translation']);
 export type UsageLogSource = z.infer<typeof usageLogSourceSchema>;
 
 export const costItemSchema = z.object({

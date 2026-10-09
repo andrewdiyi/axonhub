@@ -62,6 +62,7 @@
   "requests.source.api": "API",
   "requests.source.playground": "测试场",
   "requests.source.test": "测试",
+  "requests.source.translation": "翻译",
   "requests.actions.viewDetails": "查看详情",
   "requests.actions.copyRequestId": "复制请求 ID",
   "requests.actions.copied": "已复制",

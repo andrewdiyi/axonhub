@@ -9,7 +9,7 @@ export const requestStatusSchema = z.enum(['pending', 'processing', 'completed',
 export type RequestStatus = z.infer<typeof requestStatusSchema>;
 
 // Request Source
-export const requestSourceSchema = z.enum(['api', 'playground', 'test']);
+export const requestSourceSchema = z.enum(['api', 'playground', 'test', 'translation']);
 export type RequestSource = z.infer<typeof requestSourceSchema>;
 
 // Request Execution Status

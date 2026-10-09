@@ -364,6 +364,10 @@ export function DataTableToolbar<TData>({
       value: 'playground',
       label: t('requests.source.playground'),
     },
+    {
+      value: 'translation',
+      label: t('requests.source.translation'),
+    },
   ];
 
   return (

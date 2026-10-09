@@ -14,6 +14,16 @@ func WithSource(ctx context.Context, source request.Source) context.Context {
 	return withContainer(ctx, container)
 }
 
+// WithSourceOverride is WithSource but replaces an already-set source, for
+// internal sub-calls that must be labelled distinctly from the request that
+// triggered them (e.g. the automatic-translation sub-request).
+func WithSourceOverride(ctx context.Context, source request.Source) context.Context {
+	container := getContainer(ctx)
+	container.Source = &source
+
+	return withContainer(ctx, container)
+}
+
 // GetSource retrieves the request source from the context.
 func GetSource(ctx context.Context) (request.Source, bool) {
 	container := getContainer(ctx)

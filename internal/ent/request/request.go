@@ -225,9 +225,10 @@ const DefaultSource = SourceAPI
 
 // Source values.
 const (
-	SourceAPI        Source = "api"
-	SourcePlayground Source = "playground"
-	SourceTest       Source = "test"
+	SourceAPI         Source = "api"
+	SourcePlayground  Source = "playground"
+	SourceTest        Source = "test"
+	SourceTranslation Source = "translation"
 )
 
 func (s Source) String() string {
@@ -237,7 +238,7 @@ func (s Source) String() string {
 // SourceValidator is a validator for the "source" field enum values. It is called by the builders before save.
 func SourceValidator(s Source) error {
 	switch s {
-	case SourceAPI, SourcePlayground, SourceTest:
+	case SourceAPI, SourcePlayground, SourceTest, SourceTranslation:
 		return nil
 	default:
 		return fmt.Errorf("request: invalid enum value for source field: %q", s)

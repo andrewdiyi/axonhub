@@ -11,6 +11,7 @@ import (
 	"github.com/samber/lo"
 
 	"github.com/looplj/axonhub/internal/contexts"
+	"github.com/looplj/axonhub/internal/ent/request"
 	"github.com/looplj/axonhub/internal/objects"
 	"github.com/looplj/axonhub/internal/pkg/xjson"
 	"github.com/looplj/axonhub/internal/server/biz"
@@ -216,7 +217,12 @@ func (c *translationCaller) translateWithInstruction(ctx context.Context, channe
 	// and quota enforcement can fail the internal call. This mirrors how Playground
 	// and channel tests invoke the orchestrator (no API key in context), which is
 	// why they work regardless of the caller's profile.
+	//
+	// The sub-call is also labelled with its own Source so the request log shows
+	// the translation's caller as "translation" instead of inheriting the
+	// triggering request's source.
 	subCtx := withInternalTranslationCall(contexts.WithoutAPIKey(ctx))
+	subCtx = contexts.WithSourceOverride(subCtx, request.SourceTranslation)
 
 	result, err := pinned.Process(subCtx, &httpclient.Request{
 		Headers: http.Header{"Content-Type": []string{"application/json"}},
