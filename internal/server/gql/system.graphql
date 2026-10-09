@@ -215,7 +215,8 @@ enum TranslationScope {
 
 type TranslationSettings {
   enabled: Boolean!
-  modelID: String!
+  channelID: Int!
+  model: String!
   agentLanguage: String!
   humanLanguage: String!
   scopes: [TranslationScope!]!
@@ -225,7 +226,8 @@ type TranslationSettings {
 
 input UpdateTranslationSettingsInput {
   enabled: Boolean
-  modelID: String
+  channelID: Int
+  model: String
   agentLanguage: String
   humanLanguage: String
   scopes: [TranslationScope!]

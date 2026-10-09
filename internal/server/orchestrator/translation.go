@@ -50,7 +50,7 @@ func (m *translationMiddleware) OnInboundLlmRequest(ctx context.Context, request
 	}
 
 	settings := m.inbound.state.SystemService.TranslationSettingsOrDefault(ctx)
-	if !settings.Enabled || settings.ModelID == "" {
+	if !settings.Enabled || settings.ChannelID == 0 || settings.Model == "" {
 		return request, nil
 	}
 
@@ -59,7 +59,7 @@ func (m *translationMiddleware) OnInboundLlmRequest(ctx context.Context, request
 		return request, nil
 	}
 
-	if err := translateMessageContent(ctx, caller, &request.Messages[index], settings.ModelID, settings.IncomingPromptTemplate, settings.AgentLanguage); err != nil {
+	if err := translateMessageContent(ctx, caller, &request.Messages[index], settings.ChannelID, settings.Model, settings.IncomingPromptTemplate, settings.AgentLanguage); err != nil {
 		log.Warn(ctx, "failed to translate incoming request, passing through original text", log.Cause(err))
 		return request, nil
 	}
@@ -82,7 +82,7 @@ func (m *translationMiddleware) OnOutboundLlmResponse(ctx context.Context, respo
 
 	state := m.outbound.state
 	settings := state.SystemService.TranslationSettingsOrDefault(ctx)
-	if !settings.Enabled || settings.ModelID == "" {
+	if !settings.Enabled || settings.ChannelID == 0 || settings.Model == "" {
 		return response, nil
 	}
 
@@ -102,7 +102,7 @@ func (m *translationMiddleware) OnOutboundLlmResponse(ctx context.Context, respo
 			continue
 		}
 
-		if err := translateMessageContent(ctx, caller, msg, settings.ModelID, settings.OutgoingPromptTemplate, settings.HumanLanguage); err != nil {
+		if err := translateMessageContent(ctx, caller, msg, settings.ChannelID, settings.Model, settings.OutgoingPromptTemplate, settings.HumanLanguage); err != nil {
 			log.Warn(ctx, "failed to translate outgoing response, passing through original text", log.Cause(err))
 			continue
 		}
@@ -135,7 +135,7 @@ func (m *translationMiddleware) OnOutboundLlmStream(ctx context.Context, stream 
 
 	state := m.outbound.state
 	settings := state.SystemService.TranslationSettingsOrDefault(ctx)
-	if !settings.Enabled || settings.ModelID == "" {
+	if !settings.Enabled || settings.ChannelID == 0 || settings.Model == "" {
 		return stream, nil
 	}
 
@@ -194,6 +194,13 @@ func (m *translationMiddleware) OnOutboundLlmStream(ctx context.Context, stream 
 	}
 
 	final := *last
+	// last is frequently a terminal/sentinel event (e.g. Object == "[DONE]"),
+	// which the pipeline's empty-response detector (hasResponseContent) checks
+	// *before* it even looks at Choices. Clear that inherited marker: final is
+	// about to carry real (translated or fail-open) text, not a sentinel, so
+	// leaving it in place would make a perfectly good response look empty and
+	// trigger spurious retries.
+	final.Object = "chat.completion.chunk"
 	final.Choices = make([]llm.Choice, 0, len(texts))
 
 	translated := false
@@ -201,7 +208,7 @@ func (m *translationMiddleware) OnOutboundLlmStream(ctx context.Context, stream 
 	for index, builder := range texts {
 		text := builder.String()
 
-		translatedText, err := caller.translate(ctx, settings.ModelID, text, settings.OutgoingPromptTemplate, settings.HumanLanguage)
+		translatedText, err := caller.translate(ctx, settings.ChannelID, settings.Model, text, settings.OutgoingPromptTemplate, settings.HumanLanguage)
 		if err != nil {
 			log.Warn(ctx, "failed to translate outgoing streamed response, passing through original text", log.Cause(err))
 			translatedText = text
@@ -267,9 +274,9 @@ func persistTranslatedResponse(ctx context.Context, state *PersistenceState, res
 
 // translateMessageContent translates a message's text content in place,
 // covering both the scalar Content and "text"-typed MultipleContent parts.
-func translateMessageContent(ctx context.Context, caller *translationCaller, msg *llm.Message, modelID, promptTemplate, targetLanguage string) error {
+func translateMessageContent(ctx context.Context, caller *translationCaller, msg *llm.Message, channelID int, model, promptTemplate, targetLanguage string) error {
 	if msg.Content.Content != nil {
-		translated, err := caller.translate(ctx, modelID, *msg.Content.Content, promptTemplate, targetLanguage)
+		translated, err := caller.translate(ctx, channelID, model, *msg.Content.Content, promptTemplate, targetLanguage)
 		if err != nil {
 			return err
 		}
@@ -283,7 +290,7 @@ func translateMessageContent(ctx context.Context, caller *translationCaller, msg
 			continue
 		}
 
-		translated, err := caller.translate(ctx, modelID, *part.Text, promptTemplate, targetLanguage)
+		translated, err := caller.translate(ctx, channelID, model, *part.Text, promptTemplate, targetLanguage)
 		if err != nil {
 			return err
 		}

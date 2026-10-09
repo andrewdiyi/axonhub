@@ -10,6 +10,7 @@ import (
 
 	"github.com/samber/lo"
 
+	"github.com/looplj/axonhub/internal/objects"
 	"github.com/looplj/axonhub/internal/pkg/xjson"
 	"github.com/looplj/axonhub/internal/server/biz"
 	"github.com/looplj/axonhub/llm"
@@ -38,13 +39,19 @@ const defaultTranslationPromptTemplate = "Translate the following text into %s. 
 // translate text, by re-entering a dedicated ChatCompletionOrchestrator built
 // from the same shared services (channel routing, quota, persistence) as
 // normal client traffic. Reusing the orchestrator means the call gets
-// identical model/channel routing, retry/failover, quota enforcement, and
-// persistence ("same billing") as any other request attributed to the
-// calling API key. withInternalTranslationCall marks the context so the
-// translation middleware does not recursively translate this call's own
-// request/response.
+// identical retry/failover, quota enforcement, and persistence ("same
+// billing") as any other request attributed to the calling API key.
+// withInternalTranslationCall marks the context so the translation
+// middleware does not recursively translate this call's own request/response.
+//
+// Each call pins a specific channel (via WithChannelSelector, the same
+// mechanism Playground's "channel" tab and channel tests use) rather than
+// going through the gateway Model-catalog's association-resolution path,
+// since the translation model is always one fixed, admin-chosen
+// channel+model pair.
 type translationCaller struct {
-	orchestrator *ChatCompletionOrchestrator
+	orchestrator   *ChatCompletionOrchestrator
+	channelService *biz.ChannelService
 }
 
 // NewTranslationCaller builds the internal translation caller. It is a
@@ -83,6 +90,7 @@ func NewTranslationCaller(
 			channelLimiterManager,
 			quotaProvider,
 		),
+		channelService: channelService,
 	}
 }
 
@@ -120,10 +128,10 @@ func renderTranslationPrompt(template, text, targetLanguage string) string {
 	return rendered
 }
 
-// translate calls the configured translation model with a single user-turn
+// translate calls the model configured for channelID with a single user-turn
 // prompt and returns the translated text. Returns the original text
 // unchanged for empty input, without calling the model.
-func (c *translationCaller) translate(ctx context.Context, modelID, text, promptTemplate, targetLanguage string) (string, error) {
+func (c *translationCaller) translate(ctx context.Context, channelID int, model, text, promptTemplate, targetLanguage string) (string, error) {
 	if strings.TrimSpace(text) == "" {
 		return text, nil
 	}
@@ -131,7 +139,7 @@ func (c *translationCaller) translate(ctx context.Context, modelID, text, prompt
 	prompt := renderTranslationPrompt(promptTemplate, text, targetLanguage)
 
 	req := &llm.Request{
-		Model: modelID,
+		Model: model,
 		Messages: []llm.Message{
 			{Role: "user", Content: llm.MessageContent{Content: lo.ToPtr(prompt)}},
 		},
@@ -143,7 +151,9 @@ func (c *translationCaller) translate(ctx context.Context, modelID, text, prompt
 		return "", fmt.Errorf("failed to marshal translation request: %w", err)
 	}
 
-	result, err := c.orchestrator.Process(withInternalTranslationCall(ctx), &httpclient.Request{
+	pinned := c.orchestrator.WithChannelSelector(NewSpecifiedChannelSelector(c.channelService, objects.GUID{Type: "Channel", ID: channelID}))
+
+	result, err := pinned.Process(withInternalTranslationCall(ctx), &httpclient.Request{
 		Headers: http.Header{"Content-Type": []string{"application/json"}},
 		Body:    body,
 	})

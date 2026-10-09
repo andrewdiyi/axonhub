@@ -11,7 +11,8 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { AutoCompleteSelect } from '@/components/auto-complete-select';
-import { useQueryAllModels } from '@/features/models/data/models';
+import { useAllChannelSummarys } from '@/features/channels/data/channels';
+import { extractNumberIDAsNumber } from '@/lib/utils';
 import { useSystemContext } from '../context/system-context';
 import { useTranslationSettings, useUpdateTranslationSettings, type TranslationScope } from '../data/system';
 
@@ -23,12 +24,13 @@ export function TranslationSettings() {
   const updateSettings = useUpdateTranslationSettings();
   const { isLoading, setIsLoading } = useSystemContext();
 
-  const { data: modelsData, isLoading: isLoadingModels } = useQueryAllModels({
-    where: { statusIn: ['enabled'], typeIn: ['chat'] },
-  });
+  // Admin-level page: no project context is passed, so this lists every
+  // channel regardless of the currently selected project.
+  const { data: channelsData, isLoading: isLoadingChannels } = useAllChannelSummarys();
 
   const [enabled, setEnabled] = useState(false);
-  const [modelID, setModelID] = useState('');
+  const [channelID, setChannelID] = useState(0);
+  const [model, setModel] = useState('');
   const [agentLanguage, setAgentLanguage] = useState('');
   const [humanLanguage, setHumanLanguage] = useState('');
   const [scopes, setScopes] = useState<TranslationScope[]>([]);
@@ -38,7 +40,8 @@ export function TranslationSettings() {
   useEffect(() => {
     if (settings) {
       setEnabled(settings.enabled);
-      setModelID(settings.modelID);
+      setChannelID(settings.channelID);
+      setModel(settings.model);
       setAgentLanguage(settings.agentLanguage);
       setHumanLanguage(settings.humanLanguage);
       setScopes(settings.scopes);
@@ -47,10 +50,32 @@ export function TranslationSettings() {
     }
   }, [settings]);
 
-  const modelItems = React.useMemo(
-    () => (modelsData?.edges ?? []).map((edge) => ({ value: edge.node.modelID, label: edge.node.name || edge.node.modelID })),
-    [modelsData]
+  const enabledChannels = React.useMemo(
+    () => (channelsData?.edges ?? []).filter((edge) => edge.node.status === 'enabled'),
+    [channelsData]
   );
+
+  const channelItems = React.useMemo(
+    () => enabledChannels.map((edge) => ({ value: String(extractNumberIDAsNumber(edge.node.id)), label: edge.node.name })),
+    [enabledChannels]
+  );
+
+  const selectedChannel = React.useMemo(
+    () => enabledChannels.find((edge) => extractNumberIDAsNumber(edge.node.id) === channelID)?.node,
+    [enabledChannels, channelID]
+  );
+
+  // Model options are scoped to whichever channel is selected, the same way
+  // Playground's "channel" tab picks a model from that channel's own entries.
+  const modelItems = React.useMemo(
+    () => (selectedChannel?.allModelEntries ?? []).map((entry) => ({ value: entry.requestModel, label: entry.requestModel })),
+    [selectedChannel]
+  );
+
+  const handleChannelChange = (value: string) => {
+    setChannelID(value ? Number(value) : 0);
+    setModel('');
+  };
 
   const toggleScope = (scope: TranslationScope, checked: boolean) => {
     setScopes((previous) => (checked ? [...previous, scope] : previous.filter((value) => value !== scope)));
@@ -61,7 +86,8 @@ export function TranslationSettings() {
     try {
       await updateSettings.mutateAsync({
         enabled,
-        modelID: modelID.trim(),
+        channelID,
+        model,
         agentLanguage: agentLanguage.trim(),
         humanLanguage: humanLanguage.trim(),
         scopes,
@@ -75,7 +101,8 @@ export function TranslationSettings() {
 
   const hasChanges = settings
     ? settings.enabled !== enabled ||
-      settings.modelID !== modelID ||
+      settings.channelID !== channelID ||
+      settings.model !== model ||
       settings.agentLanguage !== agentLanguage ||
       settings.humanLanguage !== humanLanguage ||
       settings.incomingPromptTemplate !== incomingPromptTemplate ||
@@ -109,14 +136,29 @@ export function TranslationSettings() {
             <Switch id='translation-enabled' checked={enabled} onCheckedChange={setEnabled} />
           </div>
           <div className='space-y-2'>
+            <Label htmlFor='translation-channel'>{t('system.translation.channel.label')}</Label>
+            <div className='max-w-md'>
+              <AutoCompleteSelect
+                selectedValue={channelID ? String(channelID) : ''}
+                onSelectedValueChange={handleChannelChange}
+                items={channelItems}
+                placeholder={t('system.translation.channel.placeholder')}
+                isLoading={isLoadingChannels}
+              />
+            </div>
+            <div className='text-muted-foreground text-sm'>{t('system.translation.channel.description')}</div>
+          </div>
+          <div className='space-y-2'>
             <Label htmlFor='translation-model'>{t('system.translation.model.label')}</Label>
             <div className='max-w-md'>
               <AutoCompleteSelect
-                selectedValue={modelID}
-                onSelectedValueChange={setModelID}
+                selectedValue={model}
+                onSelectedValueChange={setModel}
                 items={modelItems}
-                placeholder={t('system.translation.model.placeholder')}
-                isLoading={isLoadingModels}
+                placeholder={
+                  channelID ? t('system.translation.model.placeholder') : t('system.translation.model.placeholderNoChannel')
+                }
+                isLoading={isLoadingChannels}
               />
             </div>
             <div className='text-muted-foreground text-sm'>{t('system.translation.model.description')}</div>

@@ -272,7 +272,8 @@ export type TranslationScope = 'system' | 'developer' | 'user' | 'assistant' | '
 
 export interface TranslationSettings {
   enabled: boolean;
-  modelID: string;
+  channelID: number;
+  model: string;
   agentLanguage: string;
   humanLanguage: string;
   scopes: TranslationScope[];
@@ -282,7 +283,8 @@ export interface TranslationSettings {
 
 export interface UpdateTranslationSettingsInput {
   enabled?: boolean;
-  modelID?: string;
+  channelID?: number;
+  model?: string;
   agentLanguage?: string;
   humanLanguage?: string;
   scopes?: TranslationScope[];
@@ -991,7 +993,8 @@ const TRANSLATION_SETTINGS_QUERY = `
   query TranslationSettings {
     translationSettings {
       enabled
-      modelID
+      channelID
+      model
       agentLanguage
       humanLanguage
       scopes

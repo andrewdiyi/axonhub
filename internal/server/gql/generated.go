@@ -1982,10 +1982,11 @@ type ComplexityRoot struct {
 
 	TranslationSettings struct {
 		AgentLanguage          func(childComplexity int) int
+		ChannelID              func(childComplexity int) int
 		Enabled                func(childComplexity int) int
 		HumanLanguage          func(childComplexity int) int
 		IncomingPromptTemplate func(childComplexity int) int
-		ModelID                func(childComplexity int) int
+		Model                  func(childComplexity int) int
 		OutgoingPromptTemplate func(childComplexity int) int
 		Scopes                 func(childComplexity int) int
 	}
@@ -11045,6 +11046,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.TranslationSettings.AgentLanguage(childComplexity), true
+	case "TranslationSettings.channelID":
+		if e.complexity.TranslationSettings.ChannelID == nil {
+			break
+		}
+
+		return e.complexity.TranslationSettings.ChannelID(childComplexity), true
 	case "TranslationSettings.enabled":
 		if e.complexity.TranslationSettings.Enabled == nil {
 			break
@@ -11063,12 +11070,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.TranslationSettings.IncomingPromptTemplate(childComplexity), true
-	case "TranslationSettings.modelID":
-		if e.complexity.TranslationSettings.ModelID == nil {
+	case "TranslationSettings.model":
+		if e.complexity.TranslationSettings.Model == nil {
 			break
 		}
 
-		return e.complexity.TranslationSettings.ModelID(childComplexity), true
+		return e.complexity.TranslationSettings.Model(childComplexity), true
 	case "TranslationSettings.outgoingPromptTemplate":
 		if e.complexity.TranslationSettings.OutgoingPromptTemplate == nil {
 			break
@@ -48101,8 +48108,10 @@ func (ec *executionContext) fieldContext_Query_translationSettings(_ context.Con
 			switch field.Name {
 			case "enabled":
 				return ec.fieldContext_TranslationSettings_enabled(ctx, field)
-			case "modelID":
-				return ec.fieldContext_TranslationSettings_modelID(ctx, field)
+			case "channelID":
+				return ec.fieldContext_TranslationSettings_channelID(ctx, field)
+			case "model":
+				return ec.fieldContext_TranslationSettings_model(ctx, field)
 			case "agentLanguage":
 				return ec.fieldContext_TranslationSettings_agentLanguage(ctx, field)
 			case "humanLanguage":
@@ -59157,14 +59166,43 @@ func (ec *executionContext) fieldContext_TranslationSettings_enabled(_ context.C
 	return fc, nil
 }
 
-func (ec *executionContext) _TranslationSettings_modelID(ctx context.Context, field graphql.CollectedField, obj *biz.TranslationSettings) (ret graphql.Marshaler) {
+func (ec *executionContext) _TranslationSettings_channelID(ctx context.Context, field graphql.CollectedField, obj *biz.TranslationSettings) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
 		ec.OperationContext,
 		field,
-		ec.fieldContext_TranslationSettings_modelID,
+		ec.fieldContext_TranslationSettings_channelID,
 		func(ctx context.Context) (any, error) {
-			return obj.ModelID, nil
+			return obj.ChannelID, nil
+		},
+		nil,
+		ec.marshalNInt2int,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_TranslationSettings_channelID(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "TranslationSettings",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Int does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _TranslationSettings_model(ctx context.Context, field graphql.CollectedField, obj *biz.TranslationSettings) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_TranslationSettings_model,
+		func(ctx context.Context) (any, error) {
+			return obj.Model, nil
 		},
 		nil,
 		ec.marshalNString2string,
@@ -59173,7 +59211,7 @@ func (ec *executionContext) _TranslationSettings_modelID(ctx context.Context, fi
 	)
 }
 
-func (ec *executionContext) fieldContext_TranslationSettings_modelID(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+func (ec *executionContext) fieldContext_TranslationSettings_model(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	fc = &graphql.FieldContext{
 		Object:     "TranslationSettings",
 		Field:      field,
@@ -88449,7 +88487,7 @@ func (ec *executionContext) unmarshalInputUpdateTranslationSettingsInput(ctx con
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"enabled", "modelID", "agentLanguage", "humanLanguage", "scopes", "incomingPromptTemplate", "outgoingPromptTemplate"}
+	fieldsInOrder := [...]string{"enabled", "channelID", "model", "agentLanguage", "humanLanguage", "scopes", "incomingPromptTemplate", "outgoingPromptTemplate"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -88463,13 +88501,20 @@ func (ec *executionContext) unmarshalInputUpdateTranslationSettingsInput(ctx con
 				return it, err
 			}
 			it.Enabled = data
-		case "modelID":
-			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("modelID"))
+		case "channelID":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("channelID"))
+			data, err := ec.unmarshalOInt2int(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.ChannelID = data
+		case "model":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("model"))
 			data, err := ec.unmarshalOString2string(ctx, v)
 			if err != nil {
 				return it, err
 			}
-			it.ModelID = data
+			it.Model = data
 		case "agentLanguage":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("agentLanguage"))
 			data, err := ec.unmarshalOString2string(ctx, v)
@@ -110787,8 +110832,13 @@ func (ec *executionContext) _TranslationSettings(ctx context.Context, sel ast.Se
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
-		case "modelID":
-			out.Values[i] = ec._TranslationSettings_modelID(ctx, field, obj)
+		case "channelID":
+			out.Values[i] = ec._TranslationSettings_channelID(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "model":
+			out.Values[i] = ec._TranslationSettings_model(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}

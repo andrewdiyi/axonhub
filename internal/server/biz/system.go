@@ -149,14 +149,18 @@ type SystemGeneralSettings struct {
 // TranslationSettings represents gateway-level automatic message translation
 // configuration. When enabled, both the incoming request (toward AgentLanguage)
 // and the outgoing response (toward HumanLanguage) are translated through the
-// configured gateway model before being forwarded/returned.
+// configured channel/model before being forwarded/returned.
 type TranslationSettings struct {
 	Enabled bool `json:"enabled"`
 
-	// ModelID is the gateway Model.modelID used to perform translation.
-	// Plain string reference (no ent edge), matching how PromptProtectionRule
-	// and other settings reference models.
-	ModelID string `json:"model_id"`
+	// ChannelID + Model pin translation to one specific channel's model
+	// (e.g. the channel's own "requestModel" string), the same way the
+	// Playground's "channel" tab and channel tests pin a channel directly.
+	// This skips the gateway Model-catalog association-resolution path,
+	// which is unnecessary ambiguity for a single fixed internal purpose.
+	// ChannelID is 0 when unset.
+	ChannelID int    `json:"channel_id"`
+	Model     string `json:"model"`
 
 	// AgentLanguage is the target language for the incoming (request) direction,
 	// e.g. "English". Free-text, not a locale code.
