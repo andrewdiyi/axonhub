@@ -287,8 +287,15 @@ func (c *translationCaller) translate(ctx context.Context, channelID int, model,
 // plain translation and a structured-output-tail translation of the same text
 // share one model call.
 func (c *translationCaller) translateWithInstructionCached(ctx context.Context, channelID int, model, text, promptTemplate, targetLanguage, extraInstruction string) (string, error) {
-	if strings.TrimSpace(text) == "" {
-		return text, nil
+	// Normalize surrounding whitespace before keying and sending. Clients embed
+	// the same user text with differing surrounding newlines (e.g. a structured
+	// title request's "User prompt:" tail carries leading newlines the plain
+	// conversation request does not), which would otherwise defeat dedup. Leading
+	// and trailing whitespace carries no meaning for translation.
+	text = strings.TrimSpace(text)
+
+	if text == "" {
+		return "", nil
 	}
 
 	key := translationCacheKey(channelID, model, promptTemplate, targetLanguage, text) + "\x00" + extraInstruction
