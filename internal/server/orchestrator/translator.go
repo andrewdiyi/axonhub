@@ -2,13 +2,17 @@ package orchestrator
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/samber/lo"
+	"golang.org/x/sync/singleflight"
 
 	"github.com/looplj/axonhub/internal/contexts"
 	"github.com/looplj/axonhub/internal/ent/request"
@@ -54,6 +58,94 @@ const defaultTranslationPromptTemplate = "Translate the following text into %s. 
 type translationCaller struct {
 	orchestrator   *ChatCompletionOrchestrator
 	channelService *biz.ChannelService
+
+	// cache deduplicates identical translation requests in a short window. Agent
+	// clients frequently issue several concurrent requests that embed the same
+	// user text (e.g. Codex sends a title-generation request and a conversation
+	// request at once), which would otherwise translate the same text twice.
+	cache *translationCache
+}
+
+// translationCache stores recent translation results keyed by the full
+// (channel, model, template, target language, text, extra instruction) tuple.
+// The multi-segment separator path builds its text in place and is not cached,
+// but its per-segment fallback goes through translate and is.
+type translationCache struct {
+	mu      sync.Mutex
+	entries map[string]translationCacheEntry
+	sf      singleflight.Group
+	ttl     time.Duration
+}
+
+type translationCacheEntry struct {
+	text     string
+	expireAt time.Time
+}
+
+const (
+	translationCacheTTL        = 30 * time.Second
+	translationCacheMaxEntries = 1024
+)
+
+func newTranslationCache() *translationCache {
+	return &translationCache{
+		entries: make(map[string]translationCacheEntry),
+		ttl:     translationCacheTTL,
+	}
+}
+
+// translationCacheKey hashes the full tuple so cache and singleflight keys stay
+// small even when the translated text is very large (up to ~100k characters).
+func translationCacheKey(channelID int, model, promptTemplate, targetLanguage, text string) string {
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%d\x00%s\x00%s\x00%s\x00%s", channelID, model, promptTemplate, targetLanguage, text)))
+
+	return string(sum[:])
+}
+
+func (c *translationCache) get(key string) (string, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	entry, ok := c.entries[key]
+	if !ok {
+		return "", false
+	}
+
+	if time.Now().After(entry.expireAt) {
+		delete(c.entries, key)
+		return "", false
+	}
+
+	return entry.text, true
+}
+
+func (c *translationCache) put(key, text string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if len(c.entries) >= translationCacheMaxEntries {
+		now := time.Now()
+		for k, entry := range c.entries {
+			if now.After(entry.expireAt) {
+				delete(c.entries, k)
+			}
+		}
+
+		// Still full after sweeping expired entries: drop oldest-ish by clearing
+		// half, so the cache cannot grow without bound under sustained load.
+		if len(c.entries) >= translationCacheMaxEntries {
+			dropped := 0
+			for k := range c.entries {
+				delete(c.entries, k)
+				dropped++
+				if dropped >= translationCacheMaxEntries/2 {
+					break
+				}
+			}
+		}
+	}
+
+	c.entries[key] = translationCacheEntry{text: text, expireAt: time.Now().Add(c.ttl)}
 }
 
 // NewTranslationCaller builds the internal translation caller. It is a
@@ -93,6 +185,7 @@ func NewTranslationCaller(
 			quotaProvider,
 		),
 		channelService: channelService,
+		cache:          newTranslationCache(),
 	}
 }
 
@@ -181,9 +274,50 @@ func (c *translationCaller) translateSegments(ctx context.Context, channelID int
 
 // translate calls the model configured for channelID with a single user-turn
 // prompt and returns the translated text. Returns the original text
-// unchanged for empty input, without calling the model.
+// unchanged for empty input, without calling the model. Identical requests
+// within a short window are served from cache (and de-duplicated while in
+// flight), so concurrent requests that share the same user text translate once.
 func (c *translationCaller) translate(ctx context.Context, channelID int, model, text, promptTemplate, targetLanguage string) (string, error) {
-	return c.translateWithInstruction(ctx, channelID, model, text, promptTemplate, targetLanguage, "")
+	return c.translateWithInstructionCached(ctx, channelID, model, text, promptTemplate, targetLanguage, "")
+}
+
+// translateWithInstructionCached is translateWithInstruction behind the shared
+// result cache. Only callers whose extra instruction is a fixed protocol string
+// (so the same text always maps to the same prompt) should use it; it lets a
+// plain translation and a structured-output-tail translation of the same text
+// share one model call.
+func (c *translationCaller) translateWithInstructionCached(ctx context.Context, channelID int, model, text, promptTemplate, targetLanguage, extraInstruction string) (string, error) {
+	if strings.TrimSpace(text) == "" {
+		return text, nil
+	}
+
+	key := translationCacheKey(channelID, model, promptTemplate, targetLanguage, text) + "\x00" + extraInstruction
+
+	if cached, ok := c.cache.get(key); ok {
+		return cached, nil
+	}
+
+	// singleflight collapses concurrent identical requests into one model call.
+	value, err, _ := c.cache.sf.Do(key, func() (any, error) {
+		translated, err := c.translateWithInstruction(ctx, channelID, model, text, promptTemplate, targetLanguage, extraInstruction)
+		if err != nil {
+			return "", err
+		}
+
+		c.cache.put(key, translated)
+
+		return translated, nil
+	})
+	if err != nil {
+		return "", err
+	}
+
+	translated, ok := value.(string)
+	if !ok {
+		return "", fmt.Errorf("unexpected translation cache result type")
+	}
+
+	return translated, nil
 }
 
 // translateWithInstruction is translate with an optional extra instruction

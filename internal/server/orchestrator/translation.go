@@ -432,7 +432,7 @@ func translateStructuredOutputTail(ctx context.Context, caller *translationCalle
 			return "", false
 		}
 
-		translated, err := caller.translate(ctx, settings.ChannelID, settings.Model, tail, settings.IncomingPromptTemplate, settings.AgentLanguage)
+		translated, err := caller.translateWithInstructionCached(ctx, settings.ChannelID, settings.Model, tail, settings.IncomingPromptTemplate, settings.AgentLanguage, "")
 		if err != nil {
 			log.Warn(ctx, "failed to translate structured-output user prompt, keeping original", log.Cause(err))
 			return "", false
