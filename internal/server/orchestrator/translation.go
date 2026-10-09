@@ -148,6 +148,14 @@ func (m *translationMiddleware) OnOutboundLlmStream(ctx context.Context, stream 
 
 	var last *llm.Response
 
+	// hasNonTextContent reports whether any chunk carries tool calls, inline
+	// tool results, or reasoning. The synthetic single-chunk replacement built
+	// below only has a Role and translated Content; it cannot represent these
+	// fields without a full chunk-merge, so a turn that includes any of them
+	// is passed through unmodified instead of being collapsed and silently
+	// losing that data (e.g. a tool call turning into an empty response).
+	hasNonTextContent := false
+
 	for _, chunk := range chunks {
 		if chunk == nil {
 			continue
@@ -158,6 +166,13 @@ func (m *translationMiddleware) OnOutboundLlmStream(ctx context.Context, stream 
 		for _, choice := range chunk.Choices {
 			if choice.Delta == nil {
 				continue
+			}
+
+			if len(choice.Delta.ToolCalls) > 0 || len(choice.Delta.InlineToolResults) > 0 ||
+				choice.Delta.Refusal != "" ||
+				(choice.Delta.ReasoningContent != nil && *choice.Delta.ReasoningContent != "") ||
+				(choice.Delta.Reasoning != nil && *choice.Delta.Reasoning != "") {
+				hasNonTextContent = true
 			}
 
 			// Delta.Role is typically only set on the first chunk of a choice;
@@ -189,7 +204,20 @@ func (m *translationMiddleware) OnOutboundLlmStream(ctx context.Context, stream 
 		}
 	}
 
-	if len(texts) == 0 || last == nil {
+	if hasNonTextContent || last == nil {
+		return streams.SliceStream(chunks), nil
+	}
+
+	// Drop choices that matched scope but never accumulated real text (e.g. a
+	// role-only chunk with no content), rather than translating an empty
+	// string into an equally-empty "translated" chunk.
+	for index, builder := range texts {
+		if strings.TrimSpace(builder.String()) == "" {
+			delete(texts, index)
+		}
+	}
+
+	if len(texts) == 0 {
 		return streams.SliceStream(chunks), nil
 	}
 
