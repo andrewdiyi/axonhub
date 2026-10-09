@@ -139,6 +139,14 @@ func (m *translationMiddleware) OnOutboundLlmStream(ctx context.Context, stream 
 		return stream, nil
 	}
 
+	// streams.All drains but does not close. Every other wrapper (Map, Filter,
+	// ...) delegates Close() to the stream it wraps, so the eventual consumer's
+	// Close() cascades down to OutboundPersistentStream.Close(), where
+	// response-chunk persistence and execution-status finalization happen.
+	// Returning an unrelated streams.SliceStream below would otherwise sever
+	// that chain, leaving the execution stuck in "processing" forever.
+	defer stream.Close()
+
 	chunks, err := streams.All(stream)
 	if err != nil {
 		return streams.SliceStream(chunks), err
