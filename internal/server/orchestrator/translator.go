@@ -10,6 +10,7 @@ import (
 
 	"github.com/samber/lo"
 
+	"github.com/looplj/axonhub/internal/contexts"
 	"github.com/looplj/axonhub/internal/objects"
 	"github.com/looplj/axonhub/internal/pkg/xjson"
 	"github.com/looplj/axonhub/internal/server/biz"
@@ -153,7 +154,16 @@ func (c *translationCaller) translate(ctx context.Context, channelID int, model,
 
 	pinned := c.orchestrator.WithChannelSelector(NewSpecifiedChannelSelector(c.channelService, objects.GUID{Type: "Channel", ID: channelID}))
 
-	result, err := pinned.Process(withInternalTranslationCall(ctx), &httpclient.Request{
+	// Drop the triggering client's API key from the sub-call's context. The
+	// translation channel+model are admin-configured and must not be subject to
+	// whichever key happened to trigger the request: otherwise checkApiKeyModelAccess
+	// rejects the translation model whenever it is not in that key's allowlist,
+	// and quota enforcement can fail the internal call. This mirrors how Playground
+	// and channel tests invoke the orchestrator (no API key in context), which is
+	// why they work regardless of the caller's profile.
+	subCtx := withInternalTranslationCall(contexts.WithoutAPIKey(ctx))
+
+	result, err := pinned.Process(subCtx, &httpclient.Request{
 		Headers: http.Header{"Content-Type": []string{"application/json"}},
 		Body:    body,
 	})

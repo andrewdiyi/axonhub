@@ -45,6 +45,25 @@ func GetAPIKeyString(ctx context.Context) (string, bool) {
 	return apiKey.Key, true
 }
 
+// WithoutAPIKey returns a context whose container carries no API key or user,
+// while preserving project, source, trace, and request metadata. Internal
+// sub-calls (such as automatic translation) use this so they are not subject to
+// the triggering client's per-key model allowlist, channel restrictions, or
+// quota, matching how the Playground and channel tests invoke the orchestrator.
+func WithoutAPIKey(ctx context.Context) context.Context {
+	container := getContainer(ctx)
+
+	cloned := &contextContainer{
+		ProjectID:     container.ProjectID,
+		TraceID:       container.TraceID,
+		RequestID:     container.RequestID,
+		OperationName: container.OperationName,
+		Source:        container.Source,
+	}
+
+	return context.WithValue(ctx, containerContextKey, cloned)
+}
+
 // WithUser stores the user entity in the context.
 func WithUser(ctx context.Context, user *ent.User) context.Context {
 	container := getContainer(ctx)
