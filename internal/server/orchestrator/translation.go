@@ -965,10 +965,16 @@ func containsCJK(s string) bool {
 	return false
 }
 
-// looksLikeMarkupBlock reports whether the text is a single XML-like block, e.g.
-// "<environment_context> ... </environment_context>". Whole-block harness context
-// (environment, permissions, skills instructions) is structural data, not prose.
-func looksLikeMarkupBlock(s string) bool {
+// looksLikeStructuralBlock reports whether the text is a single harness context
+// block whose tag is known to carry only machine data, e.g.
+// "<environment_context> ... </environment_context>" (cwd, shell, permissions).
+//
+// Only known context wrappers are skipped, rather than every XML-looking block:
+// an agent's user-facing deliverable can itself be wrapped in a tag -- Codex plan
+// mode emits the whole plan inside <proposed_plan> -- and treating that as
+// structural would leave exactly the text the user needs untranslated. An
+// unrecognized wrapper is assumed to hold prose and is translated.
+func looksLikeStructuralBlock(s string) bool {
 	trimmed := strings.TrimSpace(s)
 	if !strings.HasPrefix(trimmed, "<") {
 		return false
@@ -986,7 +992,19 @@ func looksLikeMarkupBlock(s string) bool {
 		return false
 	}
 
+	if _, ok := structuralContextTags[strings.ToLower(name)]; !ok {
+		return false
+	}
+
 	return strings.HasSuffix(trimmed, "</"+name+">")
+}
+
+// structuralContextTags is the allow-list of harness-injected context wrappers
+// whose body is machine data rather than prose. Add a tag here (in the agent
+// harness's own spelling) when a new context wrapper of that kind appears; do NOT
+// add wrappers that carry user-facing prose.
+var structuralContextTags = map[string]struct{}{
+	"environment_context": {},
 }
 
 // shouldTranslate reports whether a text segment is worth sending to the
@@ -995,8 +1013,8 @@ func looksLikeMarkupBlock(s string) bool {
 // (which then gets written back as if it were the translation). Concretely:
 //   - ASCII target languages: skip text with no CJK characters (it is already
 //     English-plus-markup, so translating is a no-op at best);
-//   - any target language: skip whole XML-like harness context blocks, which are
-//     structural data even when they contain no translatable prose.
+//   - any target language: skip harness context blocks whose tag is known to hold
+//     machine data (see looksLikeStructuralBlock).
 //
 // The CJK heuristic is deliberately one-sided: it only recognizes "nothing to do
 // for an ASCII target". It never claims to know a text is already Chinese, so it
@@ -1006,7 +1024,7 @@ func shouldTranslate(text, targetLanguage string) bool {
 		return false
 	}
 
-	if looksLikeMarkupBlock(text) {
+	if looksLikeStructuralBlock(text) {
 		return false
 	}
 
