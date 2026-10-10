@@ -155,6 +155,16 @@ func (c *translationCache) put(key, text string) {
 	c.entries[key] = translationCacheEntry{text: text, expireAt: time.Now().Add(c.ttl)}
 }
 
+var translationCallerSingleton atomic.Pointer[translationCaller]
+
+func registerTranslationCaller(c *translationCaller) {
+	translationCallerSingleton.Store(c)
+}
+
+func getTranslationCaller() *translationCaller {
+	return translationCallerSingleton.Load()
+}
+
 // NewTranslationCaller builds the internal translation caller. It is a
 // process-wide singleton (see translationCallerSingleton) because the
 // translation middleware is a plain function registered inside
@@ -194,18 +204,6 @@ func NewTranslationCaller(
 		channelService: channelService,
 		cache:          newTranslationCache(),
 	}
-}
-
-// translationCallerSingleton holds the process-wide translationCaller set at
-// startup via fx (see fx_module.go). It is nil until the fx.Invoke hook runs.
-var translationCallerSingleton atomic.Pointer[translationCaller]
-
-func registerTranslationCaller(c *translationCaller) {
-	translationCallerSingleton.Store(c)
-}
-
-func getTranslationCaller() *translationCaller {
-	return translationCallerSingleton.Load()
 }
 
 // renderTranslationPrompt builds the translation prompt, using the custom

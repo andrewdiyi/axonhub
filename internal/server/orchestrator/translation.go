@@ -409,18 +409,19 @@ func persistTranslatedResponse(ctx context.Context, state *PersistenceState, res
 // translateMessageContent translates a message's text content in place,
 // covering both the scalar Content and "text"-typed MultipleContent parts.
 // All text segments in the message are translated in a single model call
-// (see translateSegments) rather than one call per segment.
+// (see translateSegments) rather than one call per segment. Text segments that
+// are structural rather than natural language are skipped (see shouldTranslate).
 func translateMessageContent(ctx context.Context, caller *translationCaller, msg *llm.Message, channelID int, model, promptTemplate, targetLanguage string) error {
 	// Collect the segments in message order: scalar Content first, then text parts.
 	var (
 		segments       []string
+		segmentRefs    []*string
 		contentSegment *string
 		partSegments   []*string
 	)
 
 	if msg.Content.Content != nil {
 		contentSegment = msg.Content.Content
-		segments = append(segments, *contentSegment)
 	}
 
 	for i := range msg.Content.MultipleContent {
@@ -430,7 +431,20 @@ func translateMessageContent(ctx context.Context, caller *translationCaller, msg
 		}
 
 		partSegments = append(partSegments, part.Text)
-		segments = append(segments, *part.Text)
+	}
+
+	// Map each candidate segment to its writable slot, keeping only the ones that
+	// actually need translating.
+	refs := append([]*string{}, contentSegment)
+	refs = append(refs, partSegments...)
+
+	for _, ref := range refs {
+		if ref == nil || !shouldTranslate(*ref, targetLanguage) {
+			continue
+		}
+
+		segments = append(segments, *ref)
+		segmentRefs = append(segmentRefs, ref)
 	}
 
 	if len(segments) == 0 {
@@ -442,19 +456,104 @@ func translateMessageContent(ctx context.Context, caller *translationCaller, msg
 		return err
 	}
 
-	index := 0
-
-	if contentSegment != nil {
-		*contentSegment = translated[0]
-		index = 1
-	}
-
-	for _, part := range partSegments {
-		*part = translated[index]
-		index++
+	for i, ref := range segmentRefs {
+		*ref = translated[i]
 	}
 
 	return nil
+}
+
+// cjkRange reports whether r is a CJK ideograph or a fullwidth/ideographic
+// punctuation mark that only appears in CJK text.
+func cjkRange(r rune) bool {
+	switch {
+	case r >= 0x4E00 && r <= 0x9FFF, // CJK Unified Ideographs
+		r >= 0x3400 && r <= 0x4DBF, // CJK Extension A
+		r >= 0x3040 && r <= 0x30FF, // Hiragana / Katakana
+		r >= 0xAC00 && r <= 0xD7AF, // Hangul syllables
+		r >= 0x3000 && r <= 0x303F, // CJK symbols and punctuation
+		r >= 0xFF00 && r <= 0xFFEF: // Fullwidth forms
+		return true
+	default:
+		return false
+	}
+}
+
+func containsCJK(s string) bool {
+	for _, r := range s {
+		if cjkRange(r) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// looksLikeMarkupBlock reports whether the text is a single XML-like block, e.g.
+// "<environment_context> ... </environment_context>". Whole-block harness context
+// (environment, permissions, skills instructions) is structural data, not prose.
+func looksLikeMarkupBlock(s string) bool {
+	trimmed := strings.TrimSpace(s)
+	if !strings.HasPrefix(trimmed, "<") {
+		return false
+	}
+
+	// The first tag's name must also be the closing tag, so a block that merely
+	// starts with markup but mixes in prose is not treated as structural.
+	nameEnd := strings.IndexAny(trimmed, " >\t\n")
+	if nameEnd <= 1 {
+		return false
+	}
+
+	name := trimmed[1:nameEnd]
+	if strings.ContainsAny(name, "/<") {
+		return false
+	}
+
+	return strings.HasSuffix(trimmed, "</"+name+">")
+}
+
+// shouldTranslate reports whether a text segment is worth sending to the
+// translation model. Segments with no target-opposite content are skipped to
+// avoid the model answering with prose like "I don't see any text to translate"
+// (which then gets written back as if it were the translation). Concretely:
+//   - ASCII target languages: skip text with no CJK characters (it is already
+//     English-plus-markup, so translating is a no-op at best);
+//   - any target language: skip whole XML-like harness context blocks, which are
+//     structural data even when they contain no translatable prose.
+//
+// The CJK heuristic is deliberately one-sided: it only recognizes "nothing to do
+// for an ASCII target". It never claims to know a text is already Chinese, so it
+// cannot skip text that a Chinese target still needs.
+func shouldTranslate(text, targetLanguage string) bool {
+	if strings.TrimSpace(text) == "" {
+		return false
+	}
+
+	if looksLikeMarkupBlock(text) {
+		return false
+	}
+
+	if isAsciiLanguage(targetLanguage) && !containsCJK(text) {
+		return false
+	}
+
+	return true
+}
+
+// isAsciiLanguage reports whether the target language name refers to a
+// Latin/ASCII-script language. Only used to gate the "already ASCII" skip.
+func isAsciiLanguage(language string) bool {
+	switch strings.ToLower(strings.TrimSpace(language)) {
+	case "english", "en", "spanish", "es", "french", "fr", "german", "de",
+		"portuguese", "pt", "italian", "it", "dutch", "nl", "swedish", "sv",
+		"norwegian", "no", "danish", "da", "finnish", "fi", "polish", "pl",
+		"turkish", "tr", "indonesian", "id", "malay", "ms", "vietnamese", "vi",
+		"tagalog", "filipino", "czech", "cs", "hungarian", "hu", "romanian", "ro":
+		return true
+	default:
+		return false
+	}
 }
 
 // structuredOutputUserPromptMarker is the label an agent harness inserts before
@@ -489,6 +588,10 @@ func translateStructuredOutputTail(ctx context.Context, caller *translationCalle
 		tail := (*segment)[markerIndex+len(structuredOutputUserPromptMarker):]
 
 		if strings.TrimSpace(tail) == "" {
+			return "", false
+		}
+
+		if !shouldTranslate(tail, settings.AgentLanguage) {
 			return "", false
 		}
 
