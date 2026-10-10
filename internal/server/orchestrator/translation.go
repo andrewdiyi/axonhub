@@ -57,11 +57,15 @@ func (m *translationMiddleware) OnInboundLlmRequest(ctx context.Context, request
 	}
 
 	// Structured-output requests are agent-harness internal jobs (e.g. generating
-	// a task title) whose reply is machine data shaped by a JSON schema, not
-	// conversation. Translating the embedded user text would also change the
-	// language the harness asked the model to answer in (Codex titles must match
-	// the user's language), so the whole request is left untouched.
+	// a task title) that embed the user's text after a marker inside a larger,
+	// English instruction block. Translating the whole message would garble the
+	// instructions (observed: the model echoed the instructions back instead of
+	// translating), so only the embedded user text is translated.
 	if hasStructuredOutputConstraint(request) {
+		if translateStructuredOutputTail(ctx, caller, request, settings) {
+			m.inbound.state.TranslationApplied = true
+		}
+
 		return request, nil
 	}
 
@@ -168,9 +172,9 @@ func (m *translationMiddleware) OnOutboundLlmResponse(ctx context.Context, respo
 	}
 
 	// Structured-output replies are machine data (e.g. {"title": ...}) shaped by a
-	// JSON schema, not prose. The whole request is left untouched inbound (see
-	// OnInboundLlmRequest), so the reply is already the harness's schema-compliant
-	// original.
+	// JSON schema, not prose. Only the request's embedded user text is translated
+	// (see translateStructuredOutputTail); the reply is left as the harness's
+	// schema-compliant original.
 	if state.LlmRequest != nil && hasStructuredOutputConstraint(state.LlmRequest) {
 		return response, nil
 	}
@@ -242,9 +246,9 @@ func (m *translationMiddleware) OnOutboundLlmStream(ctx context.Context, stream 
 		return stream, nil
 	}
 
-	// Translating a structured-output reply would break its JSON schema. The whole
-	// request is left untouched inbound (see OnInboundLlmRequest), so the reply is
-	// already the harness's schema-compliant original.
+	// Translating a structured-output reply would break its JSON schema, so only
+	// the request's embedded user text is translated (see
+	// translateStructuredOutputTail); the reply is left untouched.
 	if state.LlmRequest != nil && hasStructuredOutputConstraint(state.LlmRequest) {
 		return stream, nil
 	}
@@ -961,16 +965,10 @@ func containsCJK(s string) bool {
 	return false
 }
 
-// looksLikeStructuralBlock reports whether the text is a single harness context
-// block whose tag is known to carry only machine data, e.g.
-// "<environment_context> ... </environment_context>" (cwd, shell, permissions).
-//
-// Only known context wrappers are skipped, rather than every XML-looking block:
-// an agent's user-facing deliverable can itself be wrapped in a tag -- Codex plan
-// mode emits the whole plan inside <proposed_plan> -- and treating that as
-// structural would leave exactly the text the user needs untranslated. An
-// unrecognized wrapper is assumed to hold prose and is translated.
-func looksLikeStructuralBlock(s string) bool {
+// looksLikeMarkupBlock reports whether the text is a single XML-like block, e.g.
+// "<environment_context> ... </environment_context>". Whole-block harness context
+// (environment, permissions, skills instructions) is structural data, not prose.
+func looksLikeMarkupBlock(s string) bool {
 	trimmed := strings.TrimSpace(s)
 	if !strings.HasPrefix(trimmed, "<") {
 		return false
@@ -988,19 +986,7 @@ func looksLikeStructuralBlock(s string) bool {
 		return false
 	}
 
-	if _, ok := structuralContextTags[strings.ToLower(name)]; !ok {
-		return false
-	}
-
 	return strings.HasSuffix(trimmed, "</"+name+">")
-}
-
-// structuralContextTags is the allow-list of harness-injected context wrappers
-// whose body is machine data rather than prose. Add a tag here (in the agent
-// harness's own spelling) when a new context wrapper of that kind appears; do NOT
-// add wrappers that carry user-facing prose.
-var structuralContextTags = map[string]struct{}{
-	"environment_context": {},
 }
 
 // shouldTranslate reports whether a text segment is worth sending to the
@@ -1009,8 +995,8 @@ var structuralContextTags = map[string]struct{}{
 // (which then gets written back as if it were the translation). Concretely:
 //   - ASCII target languages: skip text with no CJK characters (it is already
 //     English-plus-markup, so translating is a no-op at best);
-//   - any target language: skip harness context blocks whose tag is known to hold
-//     machine data (see looksLikeStructuralBlock).
+//   - any target language: skip whole XML-like harness context blocks, which are
+//     structural data even when they contain no translatable prose.
 //
 // The CJK heuristic is deliberately one-sided: it only recognizes "nothing to do
 // for an ASCII target". It never claims to know a text is already Chinese, so it
@@ -1020,7 +1006,7 @@ func shouldTranslate(text, targetLanguage string) bool {
 		return false
 	}
 
-	if looksLikeStructuralBlock(text) {
+	if looksLikeMarkupBlock(text) {
 		return false
 	}
 
@@ -1044,6 +1030,83 @@ func isAsciiLanguage(language string) bool {
 	default:
 		return false
 	}
+}
+
+// structuredOutputUserPromptMarker is the label an agent harness inserts before
+// the user's own text in a structured-output request. Only that trailing span is
+// user content; everything before it is harness instruction.
+const structuredOutputUserPromptMarker = "User prompt:"
+
+// translateStructuredOutputTail translates the user text embedded after
+// structuredOutputUserPromptMarker in a structured-output request's last scoped
+// message, leaving the surrounding harness instructions untouched. Returns true
+// when the text actually changed. Best-effort: any failure leaves the request
+// unmodified so the harness job still runs on the original text.
+func translateStructuredOutputTail(ctx context.Context, caller *translationCaller, request *llm.Request, settings *biz.TranslationSettings) bool {
+	index := lastTranslatableMessageIndex(request.Messages)
+	if index < 0 {
+		return false
+	}
+
+	msg := &request.Messages[index]
+
+	translateTail := func(segment *string) (string, bool) {
+		if segment == nil {
+			return "", false
+		}
+
+		markerIndex := strings.LastIndex(*segment, structuredOutputUserPromptMarker)
+		if markerIndex < 0 {
+			return "", false
+		}
+
+		head := (*segment)[:markerIndex+len(structuredOutputUserPromptMarker)]
+		tail := (*segment)[markerIndex+len(structuredOutputUserPromptMarker):]
+
+		if strings.TrimSpace(tail) == "" {
+			return "", false
+		}
+
+		if !shouldTranslate(tail, settings.AgentLanguage) {
+			return "", false
+		}
+
+		translated, err := caller.translateWithInstructionCached(ctx, settings.ChannelID, settings.Model, tail, settings.IncomingPromptTemplate, settings.AgentLanguage, "")
+		if err != nil {
+			log.Warn(ctx, "failed to translate structured-output user prompt, keeping original", log.Cause(err))
+			return "", false
+		}
+
+		if translated == tail {
+			return "", false
+		}
+
+		*segment = head + translated
+
+		return *segment, true
+	}
+
+	if msg.Content.Content != nil {
+		if updated, changed := translateTail(msg.Content.Content); changed {
+			msg.Content.Content = &updated
+
+			return true
+		}
+	}
+
+	changed := false
+	for i := range msg.Content.MultipleContent {
+		part := &msg.Content.MultipleContent[i]
+		if !strings.EqualFold(part.Type, "text") {
+			continue
+		}
+
+		if _, partChanged := translateTail(part.Text); partChanged {
+			changed = true
+		}
+	}
+
+	return changed
 }
 
 // hasStructuredOutputConstraint reports whether the request forces a structured
