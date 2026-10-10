@@ -68,8 +68,8 @@ type translationCaller struct {
 
 // translationCache stores recent translation results keyed by the full
 // (channel, model, template, target language, text, extra instruction) tuple.
-// The multi-segment separator path builds its text in place and is not cached,
-// but its per-segment fallback goes through translate and is.
+// It serves both the near-simultaneous duplicate requests within one turn and
+// the history messages that every later turn resends unchanged.
 type translationCache struct {
 	mu      sync.Mutex
 	entries map[string]translationCacheEntry
@@ -82,10 +82,17 @@ type translationCacheEntry struct {
 	expireAt time.Time
 }
 
-const (
-	translationCacheTTL        = 30 * time.Second
-	translationCacheMaxEntries = 1024
-)
+// translationCacheTTL is how long a translation stays cached. History messages
+// are resent on every turn, so this covers the gap between consecutive turns of
+// a conversation as well as the near-simultaneous duplicate requests within one
+// turn. A longer TTL trades memory for fewer retranslations of long histories;
+// translation is deterministic enough that reusing a recent result is safe.
+const translationCacheTTL = 30 * time.Minute
+
+// translationCacheMaxEntries bounds the cache. Histories can carry many messages
+// per conversation, so this is sized for concurrent conversations rather than for
+// a single request.
+const translationCacheMaxEntries = 4096
 
 func newTranslationCache() *translationCache {
 	return &translationCache{
@@ -234,9 +241,9 @@ const translationSegmentInstruction = "\n\nThe text contains multiple parts sepa
 
 // translateSegments translates several text segments of one message in a single
 // model call, joining them with a separator and splitting the result back apart.
-// This avoids one round trip (and one logged sub-request) per text part. If the
-// model drops or duplicates the separator, it falls back to translating each
-// segment individually so the message is never left partially translated.
+// This avoids one round trip per text part. If the model drops or duplicates the
+// separator, it falls back to translating each segment individually so the
+// message is never left partially translated.
 func (c *translationCaller) translateSegments(ctx context.Context, channelID int, model string, segments []string, promptTemplate, targetLanguage string) ([]string, error) {
 	if len(segments) == 1 {
 		translated, err := c.translate(ctx, channelID, model, segments[0], promptTemplate, targetLanguage)
@@ -249,7 +256,7 @@ func (c *translationCaller) translateSegments(ctx context.Context, channelID int
 
 	joined := strings.Join(segments, translationSegmentSeparator)
 
-	translated, err := c.translateWithInstruction(ctx, channelID, model, joined, promptTemplate, targetLanguage, translationSegmentInstruction)
+	translated, err := c.translateWithInstructionCached(ctx, channelID, model, joined, promptTemplate, targetLanguage, translationSegmentInstruction)
 	if err == nil {
 		parts := strings.Split(translated, translationSegmentSeparator)
 		if len(parts) == len(segments) {

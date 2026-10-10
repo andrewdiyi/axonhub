@@ -34,12 +34,11 @@ func (m *translationMiddleware) Name() string {
 	return "translate-messages"
 }
 
-// OnInboundLlmRequest translates the single most recent message matching the
-// configured scope, toward AgentLanguage, before the request reaches channel
-// selection/the upstream provider. Only the most recent message is
-// translated (not the whole resent history) to avoid re-translating every
-// prior turn on every new message, which would multiply internal translation
-// calls as a conversation grows.
+// OnInboundLlmRequest normalizes the conversation history toward the agent
+// language before the request reaches the upstream provider. The client resends
+// the full history every turn in the human language, so every scoped message is
+// translated toward the agent language; carried-over messages hit the result
+// cache instead of being retranslated. See normalizeHistoryTowardAgent.
 func (m *translationMiddleware) OnInboundLlmRequest(ctx context.Context, request *llm.Request) (*llm.Request, error) {
 	if isInternalTranslationCall(ctx) {
 		return request, nil
@@ -73,21 +72,82 @@ func (m *translationMiddleware) OnInboundLlmRequest(ctx context.Context, request
 		return request, nil
 	}
 
-	original := messageTextFingerprint(&request.Messages[index])
-
-	if err := translateMessageContent(ctx, caller, &request.Messages[index], settings.ChannelID, settings.Model, settings.IncomingPromptTemplate, settings.AgentLanguage); err != nil {
-		log.Warn(ctx, "failed to translate incoming request, passing through original text", log.Cause(err))
-		return request, nil
-	}
-
-	// Only suppress body pass-through when the text actually changed. A no-op
-	// (translation returned the same text, or the message had no text) must not
-	// disable pass-through for requests that never needed translating.
-	if messageTextFingerprint(&request.Messages[index]) != original {
+	// Normalize the whole conversation history so the model always sees one
+	// consistent language. The client resends the full history every turn, and
+	// that history is written in the human language (the user's originals and the
+	// translated replies it received). Replaying it verbatim would put the human
+	// language next to the agent-language text we send, so the model sees a
+	// "the user wrote X but I answered Y" mismatch and contradicts itself. Every
+	// resent message is therefore translated toward the agent language; the
+	// current message is already the tail of that history.
+	if normalizeHistoryTowardAgent(ctx, caller, request.Messages[:index+1], settings) {
+		// Only suppress body pass-through when the text actually changed. A no-op
+		// (translation returned the same text, e.g. already agent-language, or the
+		// message had no text) must not disable pass-through.
 		m.inbound.state.TranslationApplied = true
 	}
 
 	return request, nil
+}
+
+// normalizeHistoryTowardAgent translates every scoped message in the conversation
+// history toward the agent language. Each message is translated through the
+// caller's result cache keyed on its own text, so a message carried over from a
+// previous turn (the client resends the whole history every turn) is served from
+// cache instead of being retranslated, and always maps to the same translation.
+// Returns true when any message's text actually changed. Best-effort: a message
+// that fails to translate keeps its original text.
+func normalizeHistoryTowardAgent(ctx context.Context, caller *translationCaller, messages []llm.Message, settings *biz.TranslationSettings) bool {
+	before := make([]string, len(messages))
+	for i := range messages {
+		before[i] = messageTextFingerprint(&messages[i])
+	}
+
+	for i := range messages {
+		msg := &messages[i]
+		if !translationScopeMatches(settings.Scopes, msg.Role) {
+			continue
+		}
+
+		if err := translateMessageContent(ctx, caller, msg, settings.ChannelID, settings.Model, settings.IncomingPromptTemplate, settings.AgentLanguage); err != nil {
+			log.Warn(ctx, "failed to translate history message, keeping original", log.Cause(err))
+		}
+	}
+
+	changed := false
+
+	for i := range messages {
+		if messageTextFingerprint(&messages[i]) != before[i] {
+			changed = true
+
+			break
+		}
+	}
+
+	return changed
+}
+
+// messageTextFingerprint returns the message's translatable text segments joined
+// into one string, used to detect whether translation actually changed anything.
+func messageTextFingerprint(msg *llm.Message) string {
+	var builder strings.Builder
+
+	if msg.Content.Content != nil {
+		builder.WriteString(*msg.Content.Content)
+		builder.WriteByte(0)
+	}
+
+	for i := range msg.Content.MultipleContent {
+		part := &msg.Content.MultipleContent[i]
+		if !strings.EqualFold(part.Type, "text") || part.Text == nil {
+			continue
+		}
+
+		builder.WriteString(*part.Text)
+		builder.WriteByte(0)
+	}
+
+	return builder.String()
 }
 
 // OnOutboundLlmResponse translates the non-streaming assistant reply toward
@@ -493,29 +553,6 @@ func lastScopedMessageIndex(messages []llm.Message, scopes []objects.Translation
 	}
 
 	return -1
-}
-
-// messageTextFingerprint returns the message's translatable text segments joined
-// into one string, used to detect whether translation actually changed anything.
-func messageTextFingerprint(msg *llm.Message) string {
-	var builder strings.Builder
-
-	if msg.Content.Content != nil {
-		builder.WriteString(*msg.Content.Content)
-		builder.WriteByte(0)
-	}
-
-	for i := range msg.Content.MultipleContent {
-		part := &msg.Content.MultipleContent[i]
-		if !strings.EqualFold(part.Type, "text") || part.Text == nil {
-			continue
-		}
-
-		builder.WriteString(*part.Text)
-		builder.WriteByte(0)
-	}
-
-	return builder.String()
 }
 
 // translationScopeMatches reports whether role is configured for translation.
