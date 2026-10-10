@@ -694,9 +694,6 @@ models:
   UpdateTranslationSettingsInput:
     model:
       - github.com/looplj/axonhub/internal/server/biz.TranslationSettings
-  TranslationScope:
-    model:
-      - github.com/looplj/axonhub/internal/objects.TranslationScope
   ProxyPreset:
     model:
       - github.com/looplj/axonhub/internal/server/biz.ProxyPreset

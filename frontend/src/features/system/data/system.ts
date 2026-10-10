@@ -268,15 +268,12 @@ export interface UpdateSecuritySettingsInput {
   showRequestLogIPBanIcon?: boolean;
 }
 
-export type TranslationScope = 'system' | 'developer' | 'user' | 'assistant' | 'tool';
-
 export interface TranslationSettings {
   enabled: boolean;
   channelID: number;
   model: string;
   agentLanguage: string;
   humanLanguage: string;
-  scopes: TranslationScope[];
   incomingPromptTemplate: string;
   outgoingPromptTemplate: string;
 }
@@ -287,7 +284,6 @@ export interface UpdateTranslationSettingsInput {
   model?: string;
   agentLanguage?: string;
   humanLanguage?: string;
-  scopes?: TranslationScope[];
   incomingPromptTemplate?: string;
   outgoingPromptTemplate?: string;
 }
@@ -997,7 +993,6 @@ const TRANSLATION_SETTINGS_QUERY = `
       model
       agentLanguage
       humanLanguage
-      scopes
       incomingPromptTemplate
       outgoingPromptTemplate
     }

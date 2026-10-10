@@ -1988,7 +1988,6 @@ type ComplexityRoot struct {
 		IncomingPromptTemplate func(childComplexity int) int
 		Model                  func(childComplexity int) int
 		OutgoingPromptTemplate func(childComplexity int) int
-		Scopes                 func(childComplexity int) int
 	}
 
 	TriggerBackupPayload struct {
@@ -11082,12 +11081,6 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.TranslationSettings.OutgoingPromptTemplate(childComplexity), true
-	case "TranslationSettings.scopes":
-		if e.complexity.TranslationSettings.Scopes == nil {
-			break
-		}
-
-		return e.complexity.TranslationSettings.Scopes(childComplexity), true
 
 	case "TriggerBackupPayload.message":
 		if e.complexity.TriggerBackupPayload.Message == nil {
@@ -48116,8 +48109,6 @@ func (ec *executionContext) fieldContext_Query_translationSettings(_ context.Con
 				return ec.fieldContext_TranslationSettings_agentLanguage(ctx, field)
 			case "humanLanguage":
 				return ec.fieldContext_TranslationSettings_humanLanguage(ctx, field)
-			case "scopes":
-				return ec.fieldContext_TranslationSettings_scopes(ctx, field)
 			case "incomingPromptTemplate":
 				return ec.fieldContext_TranslationSettings_incomingPromptTemplate(ctx, field)
 			case "outgoingPromptTemplate":
@@ -59277,35 +59268,6 @@ func (ec *executionContext) fieldContext_TranslationSettings_humanLanguage(_ con
 		IsResolver: false,
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			return nil, errors.New("field of type String does not have child fields")
-		},
-	}
-	return fc, nil
-}
-
-func (ec *executionContext) _TranslationSettings_scopes(ctx context.Context, field graphql.CollectedField, obj *biz.TranslationSettings) (ret graphql.Marshaler) {
-	return graphql.ResolveField(
-		ctx,
-		ec.OperationContext,
-		field,
-		ec.fieldContext_TranslationSettings_scopes,
-		func(ctx context.Context) (any, error) {
-			return obj.Scopes, nil
-		},
-		nil,
-		ec.marshalNTranslationScope2ᚕgithubᚗcomᚋloopljᚋaxonhubᚋinternalᚋobjectsᚐTranslationScopeᚄ,
-		true,
-		true,
-	)
-}
-
-func (ec *executionContext) fieldContext_TranslationSettings_scopes(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
-	fc = &graphql.FieldContext{
-		Object:     "TranslationSettings",
-		Field:      field,
-		IsMethod:   false,
-		IsResolver: false,
-		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
-			return nil, errors.New("field of type TranslationScope does not have child fields")
 		},
 	}
 	return fc, nil
@@ -88487,7 +88449,7 @@ func (ec *executionContext) unmarshalInputUpdateTranslationSettingsInput(ctx con
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"enabled", "channelID", "model", "agentLanguage", "humanLanguage", "scopes", "incomingPromptTemplate", "outgoingPromptTemplate"}
+	fieldsInOrder := [...]string{"enabled", "channelID", "model", "agentLanguage", "humanLanguage", "incomingPromptTemplate", "outgoingPromptTemplate"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -88529,13 +88491,6 @@ func (ec *executionContext) unmarshalInputUpdateTranslationSettingsInput(ctx con
 				return it, err
 			}
 			it.HumanLanguage = data
-		case "scopes":
-			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("scopes"))
-			data, err := ec.unmarshalOTranslationScope2ᚕgithubᚗcomᚋloopljᚋaxonhubᚋinternalᚋobjectsᚐTranslationScopeᚄ(ctx, v)
-			if err != nil {
-				return it, err
-			}
-			it.Scopes = data
 		case "incomingPromptTemplate":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("incomingPromptTemplate"))
 			data, err := ec.unmarshalOString2string(ctx, v)
@@ -110852,11 +110807,6 @@ func (ec *executionContext) _TranslationSettings(ctx context.Context, sel ast.Se
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
-		case "scopes":
-			out.Values[i] = ec._TranslationSettings_scopes(ctx, field, obj)
-			if out.Values[i] == graphql.Null {
-				out.Invalids++
-			}
 		case "incomingPromptTemplate":
 			out.Values[i] = ec._TranslationSettings_incomingPromptTemplate(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
@@ -119083,82 +119033,6 @@ func (ec *executionContext) unmarshalNTraceWhereInput2ᚖgithubᚗcomᚋlooplj�
 	return &res, graphql.ErrorOnPath(ctx, err)
 }
 
-func (ec *executionContext) unmarshalNTranslationScope2githubᚗcomᚋloopljᚋaxonhubᚋinternalᚋobjectsᚐTranslationScope(ctx context.Context, v any) (objects.TranslationScope, error) {
-	tmp, err := graphql.UnmarshalString(v)
-	res := objects.TranslationScope(tmp)
-	return res, graphql.ErrorOnPath(ctx, err)
-}
-
-func (ec *executionContext) marshalNTranslationScope2githubᚗcomᚋloopljᚋaxonhubᚋinternalᚋobjectsᚐTranslationScope(ctx context.Context, sel ast.SelectionSet, v objects.TranslationScope) graphql.Marshaler {
-	_ = sel
-	res := graphql.MarshalString(string(v))
-	if res == graphql.Null {
-		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
-			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
-		}
-	}
-	return res
-}
-
-func (ec *executionContext) unmarshalNTranslationScope2ᚕgithubᚗcomᚋloopljᚋaxonhubᚋinternalᚋobjectsᚐTranslationScopeᚄ(ctx context.Context, v any) ([]objects.TranslationScope, error) {
-	var vSlice []any
-	vSlice = graphql.CoerceList(v)
-	var err error
-	res := make([]objects.TranslationScope, len(vSlice))
-	for i := range vSlice {
-		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithIndex(i))
-		res[i], err = ec.unmarshalNTranslationScope2githubᚗcomᚋloopljᚋaxonhubᚋinternalᚋobjectsᚐTranslationScope(ctx, vSlice[i])
-		if err != nil {
-			return nil, err
-		}
-	}
-	return res, nil
-}
-
-func (ec *executionContext) marshalNTranslationScope2ᚕgithubᚗcomᚋloopljᚋaxonhubᚋinternalᚋobjectsᚐTranslationScopeᚄ(ctx context.Context, sel ast.SelectionSet, v []objects.TranslationScope) graphql.Marshaler {
-	ret := make(graphql.Array, len(v))
-	var wg sync.WaitGroup
-	isLen1 := len(v) == 1
-	if !isLen1 {
-		wg.Add(len(v))
-	}
-	for i := range v {
-		i := i
-		fc := &graphql.FieldContext{
-			Index:  &i,
-			Result: &v[i],
-		}
-		ctx := graphql.WithFieldContext(ctx, fc)
-		f := func(i int) {
-			defer func() {
-				if r := recover(); r != nil {
-					ec.Error(ctx, ec.Recover(ctx, r))
-					ret = nil
-				}
-			}()
-			if !isLen1 {
-				defer wg.Done()
-			}
-			ret[i] = ec.marshalNTranslationScope2githubᚗcomᚋloopljᚋaxonhubᚋinternalᚋobjectsᚐTranslationScope(ctx, sel, v[i])
-		}
-		if isLen1 {
-			f(i)
-		} else {
-			go f(i)
-		}
-
-	}
-	wg.Wait()
-
-	for _, e := range ret {
-		if e == graphql.Null {
-			return graphql.Null
-		}
-	}
-
-	return ret
-}
-
 func (ec *executionContext) marshalNTranslationSettings2githubᚗcomᚋloopljᚋaxonhubᚋinternalᚋserverᚋbizᚐTranslationSettings(ctx context.Context, sel ast.SelectionSet, v biz.TranslationSettings) graphql.Marshaler {
 	return ec._TranslationSettings(ctx, sel, &v)
 }
@@ -126290,71 +126164,6 @@ func (ec *executionContext) marshalOTransformOptions2githubᚗcomᚋloopljᚋaxo
 func (ec *executionContext) unmarshalOTransformOptionsInput2githubᚗcomᚋloopljᚋaxonhubᚋinternalᚋobjectsᚐTransformOptions(ctx context.Context, v any) (objects.TransformOptions, error) {
 	res, err := ec.unmarshalInputTransformOptionsInput(ctx, v)
 	return res, graphql.ErrorOnPath(ctx, err)
-}
-
-func (ec *executionContext) unmarshalOTranslationScope2ᚕgithubᚗcomᚋloopljᚋaxonhubᚋinternalᚋobjectsᚐTranslationScopeᚄ(ctx context.Context, v any) ([]objects.TranslationScope, error) {
-	if v == nil {
-		return nil, nil
-	}
-	var vSlice []any
-	vSlice = graphql.CoerceList(v)
-	var err error
-	res := make([]objects.TranslationScope, len(vSlice))
-	for i := range vSlice {
-		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithIndex(i))
-		res[i], err = ec.unmarshalNTranslationScope2githubᚗcomᚋloopljᚋaxonhubᚋinternalᚋobjectsᚐTranslationScope(ctx, vSlice[i])
-		if err != nil {
-			return nil, err
-		}
-	}
-	return res, nil
-}
-
-func (ec *executionContext) marshalOTranslationScope2ᚕgithubᚗcomᚋloopljᚋaxonhubᚋinternalᚋobjectsᚐTranslationScopeᚄ(ctx context.Context, sel ast.SelectionSet, v []objects.TranslationScope) graphql.Marshaler {
-	if v == nil {
-		return graphql.Null
-	}
-	ret := make(graphql.Array, len(v))
-	var wg sync.WaitGroup
-	isLen1 := len(v) == 1
-	if !isLen1 {
-		wg.Add(len(v))
-	}
-	for i := range v {
-		i := i
-		fc := &graphql.FieldContext{
-			Index:  &i,
-			Result: &v[i],
-		}
-		ctx := graphql.WithFieldContext(ctx, fc)
-		f := func(i int) {
-			defer func() {
-				if r := recover(); r != nil {
-					ec.Error(ctx, ec.Recover(ctx, r))
-					ret = nil
-				}
-			}()
-			if !isLen1 {
-				defer wg.Done()
-			}
-			ret[i] = ec.marshalNTranslationScope2githubᚗcomᚋloopljᚋaxonhubᚋinternalᚋobjectsᚐTranslationScope(ctx, sel, v[i])
-		}
-		if isLen1 {
-			f(i)
-		} else {
-			go f(i)
-		}
-
-	}
-	wg.Wait()
-
-	for _, e := range ret {
-		if e == graphql.Null {
-			return graphql.Null
-		}
-	}
-
-	return ret
 }
 
 func (ec *executionContext) unmarshalOUpdateChannelModelAutoSyncSettingInput2ᚖgithubᚗcomᚋloopljᚋaxonhubᚋinternalᚋserverᚋbizᚐChannelModelAutoSyncSetting(ctx context.Context, v any) (*biz.ChannelModelAutoSyncSetting, error) {

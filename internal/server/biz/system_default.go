@@ -146,8 +146,4 @@ var defaultSecuritySettings = SecuritySettings{
 
 var defaultTranslationSettings = TranslationSettings{
 	Enabled: false,
-	Scopes: []objects.TranslationScope{
-		objects.TranslationScopeUser,
-		objects.TranslationScopeAssistant,
-	},
 }

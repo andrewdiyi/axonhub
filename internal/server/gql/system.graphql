@@ -205,21 +205,12 @@ input UpdateSecuritySettingsInput {
   showRequestLogIPBanIcon: Boolean
 }
 
-enum TranslationScope {
-  system
-  developer
-  user
-  assistant
-  tool
-}
-
 type TranslationSettings {
   enabled: Boolean!
   channelID: Int!
   model: String!
   agentLanguage: String!
   humanLanguage: String!
-  scopes: [TranslationScope!]!
   incomingPromptTemplate: String!
   outgoingPromptTemplate: String!
 }
@@ -230,7 +221,6 @@ input UpdateTranslationSettingsInput {
   model: String
   agentLanguage: String
   humanLanguage: String
-  scopes: [TranslationScope!]
   incomingPromptTemplate: String
   outgoingPromptTemplate: String
 }

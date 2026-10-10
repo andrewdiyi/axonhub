@@ -5,7 +5,6 @@ import { Loader2, Save } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
@@ -14,9 +13,7 @@ import { AutoCompleteSelect } from '@/components/auto-complete-select';
 import { useAllChannelSummarys } from '@/features/channels/data/channels';
 import { extractNumberIDAsNumber } from '@/lib/utils';
 import { useSystemContext } from '../context/system-context';
-import { useTranslationSettings, useUpdateTranslationSettings, type TranslationScope } from '../data/system';
-
-const ALL_SCOPES: TranslationScope[] = ['system', 'developer', 'user', 'assistant', 'tool'];
+import { useTranslationSettings, useUpdateTranslationSettings } from '../data/system';
 
 export function TranslationSettings() {
   const { t } = useTranslation();
@@ -33,7 +30,6 @@ export function TranslationSettings() {
   const [model, setModel] = useState('');
   const [agentLanguage, setAgentLanguage] = useState('');
   const [humanLanguage, setHumanLanguage] = useState('');
-  const [scopes, setScopes] = useState<TranslationScope[]>([]);
   const [incomingPromptTemplate, setIncomingPromptTemplate] = useState('');
   const [outgoingPromptTemplate, setOutgoingPromptTemplate] = useState('');
 
@@ -44,7 +40,6 @@ export function TranslationSettings() {
       setModel(settings.model);
       setAgentLanguage(settings.agentLanguage);
       setHumanLanguage(settings.humanLanguage);
-      setScopes(settings.scopes);
       setIncomingPromptTemplate(settings.incomingPromptTemplate);
       setOutgoingPromptTemplate(settings.outgoingPromptTemplate);
     }
@@ -77,10 +72,6 @@ export function TranslationSettings() {
     setModel('');
   };
 
-  const toggleScope = (scope: TranslationScope, checked: boolean) => {
-    setScopes((previous) => (checked ? [...previous, scope] : previous.filter((value) => value !== scope)));
-  };
-
   const handleSave = async () => {
     setIsLoading(true);
     try {
@@ -90,7 +81,6 @@ export function TranslationSettings() {
         model,
         agentLanguage: agentLanguage.trim(),
         humanLanguage: humanLanguage.trim(),
-        scopes,
         incomingPromptTemplate: incomingPromptTemplate.trim(),
         outgoingPromptTemplate: outgoingPromptTemplate.trim(),
       });
@@ -106,9 +96,7 @@ export function TranslationSettings() {
       settings.agentLanguage !== agentLanguage ||
       settings.humanLanguage !== humanLanguage ||
       settings.incomingPromptTemplate !== incomingPromptTemplate ||
-      settings.outgoingPromptTemplate !== outgoingPromptTemplate ||
-      settings.scopes.length !== scopes.length ||
-      settings.scopes.some((scope) => !scopes.includes(scope))
+      settings.outgoingPromptTemplate !== outgoingPromptTemplate
     : false;
 
   if (isLoadingSettings) {
@@ -196,24 +184,7 @@ export function TranslationSettings() {
             </div>
             <div className='text-muted-foreground text-sm'>{t('system.translation.humanLanguage.description')}</div>
           </div>
-          <div className='space-y-2'>
-            <Label>{t('system.translation.scopes.label')}</Label>
-            <div className='flex flex-wrap gap-4'>
-              {ALL_SCOPES.map((scope) => (
-                <div key={scope} className='flex items-center gap-2'>
-                  <Checkbox
-                    id={`translation-scope-${scope}`}
-                    checked={scopes.includes(scope)}
-                    onCheckedChange={(checked) => toggleScope(scope, checked === true)}
-                  />
-                  <Label htmlFor={`translation-scope-${scope}`} className='cursor-pointer text-sm font-normal'>
-                    {t(`system.translation.scopes.${scope}`)}
-                  </Label>
-                </div>
-              ))}
-            </div>
-            <div className='text-muted-foreground text-sm'>{t('system.translation.scopes.description')}</div>
-          </div>
+          <div className='text-muted-foreground text-sm'>{t('system.translation.rolesNote')}</div>
           <div className='text-muted-foreground text-sm'>{t('system.translation.streamingNote')}</div>
         </CardContent>
       </Card>

@@ -3,7 +3,6 @@ package orchestrator
 import (
 	"context"
 	"encoding/json"
-	"slices"
 	"strings"
 
 	"github.com/looplj/axonhub/internal/log"
@@ -67,7 +66,7 @@ func (m *translationMiddleware) OnInboundLlmRequest(ctx context.Context, request
 		return request, nil
 	}
 
-	index := lastScopedMessageIndex(request.Messages, settings.Scopes)
+	index := lastTranslatableMessageIndex(request.Messages)
 	if index < 0 {
 		return request, nil
 	}
@@ -105,7 +104,7 @@ func normalizeHistoryTowardAgent(ctx context.Context, caller *translationCaller,
 
 	for i := range messages {
 		msg := &messages[i]
-		if !translationScopeMatches(settings.Scopes, msg.Role) {
+		if !translationRoleMatches(msg.Role) {
 			continue
 		}
 
@@ -189,7 +188,7 @@ func (m *translationMiddleware) OnOutboundLlmResponse(ctx context.Context, respo
 			role = "assistant"
 		}
 
-		if !translationScopeMatches(settings.Scopes, role) {
+		if !translationRoleMatches(role) {
 			continue
 		}
 
@@ -288,7 +287,7 @@ func (m *translationMiddleware) OnOutboundLlmStream(ctx context.Context, stream 
 				role = "assistant"
 			}
 
-			if !translationScopeMatches(settings.Scopes, role) {
+			if !translationRoleMatches(role) {
 				continue
 			}
 
@@ -567,7 +566,7 @@ const structuredOutputUserPromptMarker = "User prompt:"
 // when the text actually changed. Best-effort: any failure leaves the request
 // unmodified so the harness job still runs on the original text.
 func translateStructuredOutputTail(ctx context.Context, caller *translationCaller, request *llm.Request, settings *biz.TranslationSettings) bool {
-	index := lastScopedMessageIndex(request.Messages, settings.Scopes)
+	index := lastTranslatableMessageIndex(request.Messages)
 	if index < 0 {
 		return false
 	}
@@ -646,11 +645,11 @@ func hasStructuredOutputConstraint(request *llm.Request) bool {
 	return request.ResponseFormat.Type != "" && request.ResponseFormat.Type != "text"
 }
 
-// lastScopedMessageIndex returns the index of the most recent message whose
-// role is in scopes, or -1 if none match.
-func lastScopedMessageIndex(messages []llm.Message, scopes []objects.TranslationScope) int {
+// lastTranslatableMessageIndex returns the index of the most recent translatable
+// message, or -1 if none match.
+func lastTranslatableMessageIndex(messages []llm.Message) int {
 	for i := len(messages) - 1; i >= 0; i-- {
-		if translationScopeMatches(scopes, messages[i].Role) {
+		if translationRoleMatches(messages[i].Role) {
 			return i
 		}
 	}
@@ -658,13 +657,21 @@ func lastScopedMessageIndex(messages []llm.Message, scopes []objects.Translation
 	return -1
 }
 
-// translationScopeMatches reports whether role is configured for translation.
-// Unlike prompt-protection's scope check, an empty scope list matches nothing:
-// translation is an explicit opt-in per role, not a default-allow regex gate.
-func translationScopeMatches(scopes []objects.TranslationScope, role string) bool {
-	if len(scopes) == 0 {
-		return false
-	}
+// translationRoles are the message roles automatic translation applies to. This
+// is a correctness constraint, not a preference: user messages carry the human
+// language and assistant messages the agent's, so both must be normalized or the
+// model sees a mismatched history. Other roles are excluded on purpose --
+// system/developer are the client's own (English) harness instructions, and tool
+// messages are machine data (command output, file contents, paths) that
+// translating would corrupt.
+var translationRoles = map[string]struct{}{
+	"user":      {},
+	"assistant": {},
+}
 
-	return slices.Contains(scopes, objects.TranslationScope(strings.ToLower(role)))
+// translationRoleMatches reports whether role is translated.
+func translationRoleMatches(role string) bool {
+	_, ok := translationRoles[strings.ToLower(role)]
+
+	return ok
 }

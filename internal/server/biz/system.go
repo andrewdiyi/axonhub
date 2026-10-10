@@ -169,9 +169,6 @@ type TranslationSettings struct {
 	// e.g. "Simplified Chinese". Free-text, not a locale code.
 	HumanLanguage string `json:"human_language"`
 
-	// Scopes controls which message roles get translated.
-	Scopes []objects.TranslationScope `json:"scopes,omitempty"`
-
 	// IncomingPromptTemplate/OutgoingPromptTemplate are optional custom prompt
 	// templates for each direction. Empty means use the built-in default prompt.
 	// Supported placeholders: {Text}, {TargetLanguage}.
