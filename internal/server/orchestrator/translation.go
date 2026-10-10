@@ -222,12 +222,14 @@ func (m *translationMiddleware) OnOutboundLlmResponse(ctx context.Context, respo
 	return response, nil
 }
 
-// OnOutboundLlmStream buffers the full streamed reply, translates it once
-// (there is no hook that exposes the full text of a streamed turn before
-// delivery, so this is the simplest correct behavior), then emits it as a
-// single replacement chunk preserving the final chunk's finish reason and
-// usage. This trades incremental streaming UX for correctness: the client
-// receives nothing until generation and translation both complete.
+// OnOutboundLlmStream buffers the full streamed reply, translates the
+// user-facing prose in it once (there is no hook that exposes the full text of a
+// streamed turn before delivery, so this is the simplest correct behavior), and
+// then re-emits the stream with those prose deltas rewritten in place. Every
+// other byte -- reasoning, tool calls, encrypted content, and each chunk's
+// transformer metadata -- is passed through untouched. This trades incremental
+// streaming UX for correctness: the client receives nothing until generation and
+// translation both complete.
 func (m *translationMiddleware) OnOutboundLlmStream(ctx context.Context, stream streams.Stream[*llm.Response]) (streams.Stream[*llm.Response], error) {
 	if isInternalTranslationCall(ctx) {
 		return stream, nil
@@ -264,13 +266,251 @@ func (m *translationMiddleware) OnOutboundLlmStream(ctx context.Context, stream 
 		return streams.SliceStream(chunks), err
 	}
 
+	if translateOutgoingStreamChunks(ctx, caller, chunks, settings) {
+		persistTranslatedStream(ctx, state, chunks)
+	}
+
+	return streams.SliceStream(chunks), nil
+}
+
+// translateOutgoingStreamChunks rewrites, in place, the user-facing prose a
+// buffered streamed turn carries -- each choice's assistant text and the prose
+// arguments of interactive tools -- and reports whether anything changed.
+// Everything else (reasoning, ordinary tool calls including a Responses custom
+// tool call's script Input, encrypted content, and every chunk's transformer
+// metadata) is left exactly as the provider emitted it.
+//
+// Rebuilding the turn from a merged message instead silently drops data the
+// client depends on: merging only Function.Arguments emptied a Responses custom
+// tool call's Input (the script the agent must run, so the next turn failed with
+// "expects raw JavaScript source text"), and collapsing the chunks kept only the
+// last chunk's transformer metadata, detaching a reasoning item's encrypted
+// content from its provider id (the next turn then replayed an id the upstream
+// could not verify). Rewriting just the text in place reconstructs nothing.
+func translateOutgoingStreamChunks(ctx context.Context, caller *translationCaller, chunks []*llm.Response, settings *biz.TranslationSettings) bool {
+	// A streamed choice's text arrives split across many chunks. Translate each
+	// contiguous run of text as one string (translating fragments separately
+	// loses the sentence context the model needs), then write the result into the
+	// run's first text slot and empty the rest: downstream transformers
+	// concatenate the deltas in order, so the client still reads the whole
+	// translation. A run ends when a chunk carrying a tool call or reasoning sits
+	// between two text chunks, so a turn that interleaves prose with tool calls
+	// keeps its original ordering instead of being collapsed to the front. Runs
+	// are tracked per choice index so a multi-choice stream never mixes them.
+	type textRun struct {
+		slots  []*string
+		broken bool
+	}
+
+	runs := map[int]*textRun{}
+	var (
+		choiceOrder []int
+		textRuns    [][]*string
+	)
+
+	// Interactive tool arguments stream across chunks too; group the chunks
+	// carrying them so the tool's JSON can be assembled before its prose is
+	// translated. A tool call is keyed by its id, falling back to the id learned
+	// from its identity chunk (some providers emit only the index on argument
+	// deltas) and finally to its position: a response stream may start each
+	// message with its own tool-call list, so "first tool call seen" is not stable.
+	type toolKey struct {
+		id string
+
+		choice int
+		index  int
+	}
+
+	type slotKey struct {
+		choice int
+		index  int
+	}
+
+	toolSlots := map[toolKey][]*llm.ToolCall{}
+	toolNames := map[toolKey]string{}
+	idByIndex := map[slotKey]string{}
+
+	keyFor := func(choiceIndex int, tc *llm.ToolCall) toolKey {
+		slot := slotKey{choice: choiceIndex, index: tc.Index}
+
+		if tc.ID != "" {
+			idByIndex[slot] = tc.ID
+
+			return toolKey{id: tc.ID}
+		}
+
+		if id, ok := idByIndex[slot]; ok && id != "" {
+			return toolKey{id: id}
+		}
+
+		return toolKey{choice: choiceIndex, index: tc.Index}
+	}
+
+	for _, chunk := range chunks {
+		if chunk == nil {
+			continue
+		}
+
+		for i := range chunk.Choices {
+			choice := &chunk.Choices[i]
+			delta := choice.Delta
+			if delta == nil {
+				continue
+			}
+
+			run := runs[choice.Index]
+			if run == nil {
+				run = &textRun{}
+				runs[choice.Index] = run
+				choiceOrder = append(choiceOrder, choice.Index)
+			}
+
+			// Any non-text output ends the current text run.
+			if len(delta.ToolCalls) > 0 || delta.ReasoningContent != nil || delta.Reasoning != nil ||
+				delta.ReasoningSignature != nil || len(delta.InlineToolResults) > 0 {
+				run.broken = true
+			}
+
+			var (
+				slot      *string
+				tailParts []*string
+			)
+
+			if translationRoleMatches(cohesiveRole(delta.Role)) {
+				if delta.Content.Content != nil {
+					slot = delta.Content.Content
+				}
+
+				for j := range delta.Content.MultipleContent {
+					part := &delta.Content.MultipleContent[j]
+					if strings.EqualFold(part.Type, "text") && part.Text != nil {
+						tailParts = append(tailParts, part.Text)
+
+						continue
+					}
+
+					// A non-text part (image, compaction summary, ...) is a separate
+					// output item; text after it must not merge into the run before it.
+					run.broken = true
+				}
+			}
+
+			if slot != nil || len(tailParts) > 0 {
+				if run.broken && len(run.slots) > 0 {
+					textRuns = append(textRuns, run.slots)
+					run.slots = nil
+				}
+
+				run.broken = false
+
+				if slot != nil {
+					run.slots = append(run.slots, slot)
+				}
+
+				run.slots = append(run.slots, tailParts...)
+			}
+
+			for j := range delta.ToolCalls {
+				tc := &delta.ToolCalls[j]
+				key := keyFor(choice.Index, tc)
+
+				if tc.Function.Name != "" {
+					toolNames[key] = tc.Function.Name
+				}
+
+				if tc.Function.Arguments != "" {
+					toolSlots[key] = append(toolSlots[key], tc)
+				}
+			}
+		}
+	}
+
+	for _, index := range choiceOrder {
+		run := runs[index]
+		if len(run.slots) > 0 {
+			textRuns = append(textRuns, run.slots)
+		}
+	}
+
+	changed := false
+
+	for _, slots := range textRuns {
+		var builder strings.Builder
+
+		for _, slot := range slots {
+			builder.WriteString(*slot)
+		}
+
+		text := builder.String()
+		if !shouldTranslate(text, settings.HumanLanguage) {
+			continue
+		}
+
+		translated, err := caller.translate(ctx, settings.ChannelID, settings.Model, text, settings.OutgoingPromptTemplate, settings.HumanLanguage)
+		if err != nil {
+			log.Warn(ctx, "failed to translate outgoing streamed response, passing through original text", log.Cause(err))
+
+			continue
+		}
+
+		if translated == text {
+			continue
+		}
+
+		*slots[0] = translated
+		for _, slot := range slots[1:] {
+			*slot = ""
+		}
+
+		changed = true
+	}
+
+	for key, slots := range toolSlots {
+		if _, ok := interactiveToolNames[strings.ToLower(toolNames[key])]; !ok {
+			continue
+		}
+
+		var builder strings.Builder
+
+		for _, tc := range slots {
+			builder.WriteString(tc.Function.Arguments)
+		}
+
+		// Reuse the non-streaming interactive-tool translation by assembling the
+		// streamed fragments into one tool call, translating it, then writing the
+		// result back into the first fragment's slot.
+		msg := &llm.Message{ToolCalls: []llm.ToolCall{{
+			Type:     slots[0].Type,
+			Index:    slots[0].Index,
+			Function: llm.FunctionCall{Name: toolNames[key], Arguments: builder.String()},
+		}}}
+
+		if !translateInteractiveToolCalls(ctx, caller, msg, settings.ChannelID, settings.Model, settings.OutgoingPromptTemplate, settings.HumanLanguage) {
+			continue
+		}
+
+		slots[0].Function.Arguments = msg.ToolCalls[0].Function.Arguments
+		for _, tc := range slots[1:] {
+			tc.Function.Arguments = ""
+		}
+
+		changed = true
+	}
+
+	return changed
+}
+
+// persistTranslatedStream records the client-facing (translated) streamed turn
+// alongside the original, pre-translation response_body persisted by
+// persistRequestExecution, so both versions remain available for audit.
+// Best-effort: failures are logged, never surfaced to the client.
+func persistTranslatedStream(ctx context.Context, state *PersistenceState, chunks []*llm.Response) {
+	if state == nil || state.RequestExec == nil {
+		return
+	}
+
 	var last *llm.Response
 
-	// Merge every chunk's choice into one message per choice index. Text is
-	// translated below; tool calls are kept verbatim (but their interactive-tool
-	// arguments are translated, same as the non-streaming path) and reasoning is
-	// concatenated. Producing one merged response per choice lets a turn that
-	// mixes text with tool calls keep both, instead of dropping the tool call.
 	merged := map[int]*llm.Message{}
 	var seq []int
 
@@ -298,54 +538,27 @@ func (m *translationMiddleware) OnOutboundLlmStream(ctx context.Context, stream 
 	}
 
 	if last == nil || len(merged) == 0 {
-		return streams.SliceStream(chunks), nil
+		return
 	}
 
-	final := *last
-	// last is frequently a terminal/sentinel event (e.g. Object == "[DONE]"),
-	// which the pipeline's empty-response detector (hasResponseContent) checks
-	// *before* it even looks at Choices. Clear that inherited marker: final is
-	// about to carry real (translated or fail-open) content, not a sentinel, so
-	// leaving it in place would make a perfectly good response look empty and
-	// trigger spurious retries.
-	final.Object = "chat.completion.chunk"
-	final.Choices = make([]llm.Choice, 0, len(seq))
+	record := *last
+	// The last chunk is often a terminal sentinel; the merged record carries real
+	// content, so it must not inherit that marker.
+	if record.Object == "" || record.Object == "[DONE]" {
+		record.Object = "chat.completion.chunk"
+	}
 
-	translated := false
+	record.Choices = make([]llm.Choice, 0, len(seq))
 
 	for _, index := range seq {
-		msg := merged[index]
-
-		if !translationRoleMatches(msg.Role) {
-			final.Choices = append(final.Choices, mergedChoice(index, msg, lastFinishReason(chunks, index)))
-
-			continue
-		}
-
-		contentTranslated := false
-
-		if err := translateMessageContent(ctx, caller, msg, settings.ChannelID, settings.Model, settings.OutgoingPromptTemplate, settings.HumanLanguage); err == nil {
-			contentTranslated = true
-		} else {
-			log.Warn(ctx, "failed to translate outgoing streamed response, passing through original text", log.Cause(err))
-		}
-
-		// Interactive tools carry the questions/options the human reads; translate
-		// their prose arguments too, mirroring the non-streaming path.
-		toolsTranslated := translateInteractiveToolCalls(ctx, caller, msg, settings.ChannelID, settings.Model, settings.OutgoingPromptTemplate, settings.HumanLanguage)
-
-		if contentTranslated || toolsTranslated {
-			translated = true
-		}
-
-		final.Choices = append(final.Choices, mergedChoice(index, msg, lastFinishReason(chunks, index)))
+		record.Choices = append(record.Choices, llm.Choice{
+			Index:        index,
+			Delta:        merged[index],
+			FinishReason: lastFinishReason(chunks, index),
+		})
 	}
 
-	if translated {
-		persistTranslatedResponse(ctx, state, &final)
-	}
-
-	return streams.SliceStream([]*llm.Response{&final}), nil
+	persistTranslatedResponse(ctx, state, &record)
 }
 
 // cohesiveRole returns the role to assign to a merged message: the delta role if
@@ -358,18 +571,11 @@ func cohesiveRole(role string) string {
 	return role
 }
 
-// mergedChoice wraps a merged message back into a single streamed choice.
-func mergedChoice(index int, msg *llm.Message, finishReason *string) llm.Choice {
-	return llm.Choice{
-		Index:        index,
-		Delta:        msg,
-		FinishReason: finishReason,
-	}
-}
-
 // mergeDeltaIntoMessage appends one streamed delta onto the merged message,
-// concatenating text, reasoning, tool-call arguments, and preserving structured
-// fields that only appear on some chunks.
+// concatenating text, reasoning, and tool-call arguments, and preserving
+// structured fields that only appear on some chunks. It is used to build the
+// audit record of a translated streamed turn; it is deliberately not used to
+// rebuild the client-facing stream (see translateOutgoingStreamChunks).
 func mergeDeltaIntoMessage(msg *llm.Message, delta *llm.Message) {
 	if delta.Content.Content != nil {
 		if msg.Content.Content == nil {
@@ -438,6 +644,9 @@ func mergeDeltaIntoMessage(msg *llm.Message, delta *llm.Message) {
 
 // mergeToolCall merges one streamed tool-call delta into the merged message,
 // matching by index, since a tool call's name/arguments stream across chunks.
+// Both a Responses custom tool call's freeform script Input and a regular
+// function call's JSON arguments accumulate; recording only one would leave the
+// audit record missing the payload the agent actually runs.
 func mergeToolCall(msg *llm.Message, delta llm.ToolCall) {
 	for i := range msg.ToolCalls {
 		if msg.ToolCalls[i].Index != delta.Index {
@@ -453,6 +662,14 @@ func mergeToolCall(msg *llm.Message, delta llm.ToolCall) {
 		}
 
 		msg.ToolCalls[i].Function.Arguments += delta.Function.Arguments
+
+		if delta.ResponseCustomToolCall != nil {
+			if msg.ToolCalls[i].ResponseCustomToolCall == nil {
+				msg.ToolCalls[i].ResponseCustomToolCall = delta.ResponseCustomToolCall
+			} else {
+				msg.ToolCalls[i].ResponseCustomToolCall.Input += delta.ResponseCustomToolCall.Input
+			}
+		}
 
 		return
 	}
