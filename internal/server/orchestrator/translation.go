@@ -3,7 +3,10 @@ package orchestrator
 import (
 	"context"
 	"encoding/json"
+	"sort"
 	"strings"
+
+	"github.com/samber/lo"
 
 	"github.com/looplj/axonhub/internal/log"
 	"github.com/looplj/axonhub/internal/objects"
@@ -192,12 +195,24 @@ func (m *translationMiddleware) OnOutboundLlmResponse(ctx context.Context, respo
 			continue
 		}
 
-		if err := translateMessageContent(ctx, caller, msg, settings.ChannelID, settings.Model, settings.OutgoingPromptTemplate, settings.HumanLanguage); err != nil {
+		translatedThisMessage := false
+
+		if err := translateMessageContent(ctx, caller, msg, settings.ChannelID, settings.Model, settings.OutgoingPromptTemplate, settings.HumanLanguage); err == nil {
+			translatedThisMessage = true
+		} else {
 			log.Warn(ctx, "failed to translate outgoing response, passing through original text", log.Cause(err))
-			continue
 		}
 
-		translated = true
+		// Interactive tools (e.g. Codex plan mode's request_user_input) carry the
+		// questions and options the human reads, so their prose arguments are
+		// translated too. Ordinary tool calls are left untouched.
+		if translateInteractiveToolCalls(ctx, caller, msg, settings.ChannelID, settings.Model, settings.OutgoingPromptTemplate, settings.HumanLanguage) {
+			translatedThisMessage = true
+		}
+
+		if translatedThisMessage {
+			translated = true
+		}
 	}
 
 	if translated {
@@ -249,17 +264,15 @@ func (m *translationMiddleware) OnOutboundLlmStream(ctx context.Context, stream 
 		return streams.SliceStream(chunks), err
 	}
 
-	texts := map[int]*strings.Builder{}
-
 	var last *llm.Response
 
-	// hasNonTextContent reports whether any chunk carries tool calls, inline
-	// tool results, or reasoning. The synthetic single-chunk replacement built
-	// below only has a Role and translated Content; it cannot represent these
-	// fields without a full chunk-merge, so a turn that includes any of them
-	// is passed through unmodified instead of being collapsed and silently
-	// losing that data (e.g. a tool call turning into an empty response).
-	hasNonTextContent := false
+	// Merge every chunk's choice into one message per choice index. Text is
+	// translated below; tool calls are kept verbatim (but their interactive-tool
+	// arguments are translated, same as the non-streaming path) and reasoning is
+	// concatenated. Producing one merged response per choice lets a turn that
+	// mixes text with tool calls keep both, instead of dropping the tool call.
+	merged := map[int]*llm.Message{}
+	var seq []int
 
 	for _, chunk := range chunks {
 		if chunk == nil {
@@ -273,56 +286,18 @@ func (m *translationMiddleware) OnOutboundLlmStream(ctx context.Context, stream 
 				continue
 			}
 
-			if len(choice.Delta.ToolCalls) > 0 || len(choice.Delta.InlineToolResults) > 0 ||
-				choice.Delta.Refusal != "" ||
-				(choice.Delta.ReasoningContent != nil && *choice.Delta.ReasoningContent != "") ||
-				(choice.Delta.Reasoning != nil && *choice.Delta.Reasoning != "") {
-				hasNonTextContent = true
-			}
-
-			// Delta.Role is typically only set on the first chunk of a choice;
-			// later chunks implicitly continue the same (assistant) message.
-			role := choice.Delta.Role
-			if role == "" {
-				role = "assistant"
-			}
-
-			if !translationRoleMatches(role) {
-				continue
-			}
-
-			builder, ok := texts[choice.Index]
+			msg, ok := merged[choice.Index]
 			if !ok {
-				builder = &strings.Builder{}
-				texts[choice.Index] = builder
+				msg = &llm.Message{Role: cohesiveRole(choice.Delta.Role)}
+				merged[choice.Index] = msg
+				seq = append(seq, choice.Index)
 			}
 
-			if choice.Delta.Content.Content != nil {
-				builder.WriteString(*choice.Delta.Content.Content)
-			}
-
-			for _, part := range choice.Delta.Content.MultipleContent {
-				if strings.EqualFold(part.Type, "text") && part.Text != nil {
-					builder.WriteString(*part.Text)
-				}
-			}
+			mergeDeltaIntoMessage(msg, choice.Delta)
 		}
 	}
 
-	if hasNonTextContent || last == nil {
-		return streams.SliceStream(chunks), nil
-	}
-
-	// Drop choices that matched scope but never accumulated real text (e.g. a
-	// role-only chunk with no content), rather than translating an empty
-	// string into an equally-empty "translated" chunk.
-	for index, builder := range texts {
-		if strings.TrimSpace(builder.String()) == "" {
-			delete(texts, index)
-		}
-	}
-
-	if len(texts) == 0 {
+	if last == nil || len(merged) == 0 {
 		return streams.SliceStream(chunks), nil
 	}
 
@@ -330,33 +305,40 @@ func (m *translationMiddleware) OnOutboundLlmStream(ctx context.Context, stream 
 	// last is frequently a terminal/sentinel event (e.g. Object == "[DONE]"),
 	// which the pipeline's empty-response detector (hasResponseContent) checks
 	// *before* it even looks at Choices. Clear that inherited marker: final is
-	// about to carry real (translated or fail-open) text, not a sentinel, so
+	// about to carry real (translated or fail-open) content, not a sentinel, so
 	// leaving it in place would make a perfectly good response look empty and
 	// trigger spurious retries.
 	final.Object = "chat.completion.chunk"
-	final.Choices = make([]llm.Choice, 0, len(texts))
+	final.Choices = make([]llm.Choice, 0, len(seq))
 
 	translated := false
 
-	for index, builder := range texts {
-		text := builder.String()
+	for _, index := range seq {
+		msg := merged[index]
 
-		translatedText, err := caller.translate(ctx, settings.ChannelID, settings.Model, text, settings.OutgoingPromptTemplate, settings.HumanLanguage)
-		if err != nil {
-			log.Warn(ctx, "failed to translate outgoing streamed response, passing through original text", log.Cause(err))
-			translatedText = text
+		if !translationRoleMatches(msg.Role) {
+			final.Choices = append(final.Choices, mergedChoice(index, msg, lastFinishReason(chunks, index)))
+
+			continue
+		}
+
+		contentTranslated := false
+
+		if err := translateMessageContent(ctx, caller, msg, settings.ChannelID, settings.Model, settings.OutgoingPromptTemplate, settings.HumanLanguage); err == nil {
+			contentTranslated = true
 		} else {
+			log.Warn(ctx, "failed to translate outgoing streamed response, passing through original text", log.Cause(err))
+		}
+
+		// Interactive tools carry the questions/options the human reads; translate
+		// their prose arguments too, mirroring the non-streaming path.
+		toolsTranslated := translateInteractiveToolCalls(ctx, caller, msg, settings.ChannelID, settings.Model, settings.OutgoingPromptTemplate, settings.HumanLanguage)
+
+		if contentTranslated || toolsTranslated {
 			translated = true
 		}
 
-		final.Choices = append(final.Choices, llm.Choice{
-			Index: index,
-			Delta: &llm.Message{
-				Role:    "assistant",
-				Content: llm.MessageContent{Content: &translatedText},
-			},
-			FinishReason: lastFinishReason(chunks, index),
-		})
+		final.Choices = append(final.Choices, mergedChoice(index, msg, lastFinishReason(chunks, index)))
 	}
 
 	if translated {
@@ -364,6 +346,118 @@ func (m *translationMiddleware) OnOutboundLlmStream(ctx context.Context, stream 
 	}
 
 	return streams.SliceStream([]*llm.Response{&final}), nil
+}
+
+// cohesiveRole returns the role to assign to a merged message: the delta role if
+// present, else the assistant default that streamed deltas implicitly carry.
+func cohesiveRole(role string) string {
+	if role == "" {
+		return "assistant"
+	}
+
+	return role
+}
+
+// mergedChoice wraps a merged message back into a single streamed choice.
+func mergedChoice(index int, msg *llm.Message, finishReason *string) llm.Choice {
+	return llm.Choice{
+		Index:        index,
+		Delta:        msg,
+		FinishReason: finishReason,
+	}
+}
+
+// mergeDeltaIntoMessage appends one streamed delta onto the merged message,
+// concatenating text, reasoning, tool-call arguments, and preserving structured
+// fields that only appear on some chunks.
+func mergeDeltaIntoMessage(msg *llm.Message, delta *llm.Message) {
+	if delta.Content.Content != nil {
+		if msg.Content.Content == nil {
+			msg.Content.Content = lo.ToPtr(*delta.Content.Content)
+		} else {
+			*msg.Content.Content += *delta.Content.Content
+		}
+	}
+
+	if len(delta.Content.MultipleContent) > 0 {
+		msg.Content.MultipleContent = append(msg.Content.MultipleContent, delta.Content.MultipleContent...)
+	}
+
+	for _, tc := range delta.ToolCalls {
+		mergeToolCall(msg, tc)
+	}
+
+	if delta.ReasoningContent != nil {
+		if msg.ReasoningContent == nil {
+			msg.ReasoningContent = lo.ToPtr(*delta.ReasoningContent)
+		} else {
+			*msg.ReasoningContent += *delta.ReasoningContent
+		}
+	}
+
+	if delta.Reasoning != nil {
+		if msg.Reasoning == nil {
+			msg.Reasoning = lo.ToPtr(*delta.Reasoning)
+		} else {
+			*msg.Reasoning += *delta.Reasoning
+		}
+	}
+
+	if delta.Refusal != "" {
+		msg.Refusal += delta.Refusal
+	}
+
+	if len(delta.InlineToolResults) > 0 {
+		msg.InlineToolResults = append(msg.InlineToolResults, delta.InlineToolResults...)
+	}
+
+	// Signature-bearing fields must survive the merge: dropping a reasoning
+	// signature or encrypted content breaks multi-turn reasoning for providers
+	// that require it (Anthropic thinking, Codex reasoning, ...). Take the last
+	// non-empty value rather than concatenating, since these are opaque blobs.
+	if delta.ReasoningSignature != nil && *delta.ReasoningSignature != "" {
+		msg.ReasoningSignature = delta.ReasoningSignature
+	}
+
+	if delta.RedactedReasoningContent != nil && *delta.RedactedReasoningContent != "" {
+		msg.RedactedReasoningContent = delta.RedactedReasoningContent
+	}
+
+	if len(delta.ReasoningItems) > 0 {
+		msg.ReasoningItems = append(msg.ReasoningItems, delta.ReasoningItems...)
+	}
+
+	if delta.Name != nil && msg.Name == nil {
+		msg.Name = delta.Name
+	}
+
+	if delta.CacheControl != nil {
+		msg.CacheControl = delta.CacheControl
+	}
+}
+
+// mergeToolCall merges one streamed tool-call delta into the merged message,
+// matching by index, since a tool call's name/arguments stream across chunks.
+func mergeToolCall(msg *llm.Message, delta llm.ToolCall) {
+	for i := range msg.ToolCalls {
+		if msg.ToolCalls[i].Index != delta.Index {
+			continue
+		}
+
+		if delta.ID != "" {
+			msg.ToolCalls[i].ID = delta.ID
+		}
+
+		if delta.Function.Name != "" {
+			msg.ToolCalls[i].Function.Name = delta.Function.Name
+		}
+
+		msg.ToolCalls[i].Function.Arguments += delta.Function.Arguments
+
+		return
+	}
+
+	msg.ToolCalls = append(msg.ToolCalls, delta)
 }
 
 // lastFinishReason returns the finish reason most recently reported for the
@@ -403,6 +497,172 @@ func persistTranslatedResponse(ctx context.Context, state *PersistenceState, res
 	if err := state.RequestService.UpdateRequestExecutionTranslatedResponseBody(ctx, state.RequestExec.ID, objects.JSONRawMessage(body)); err != nil {
 		log.Warn(ctx, "failed to persist translated response body", log.Cause(err))
 	}
+}
+
+// interactiveToolNames are tools whose arguments are user-facing prose: an agent
+// harness renders them as questions/options for the human to answer. Their text
+// fields are translated toward the human language. Other tools are left alone --
+// tool arguments are machine data (shell commands, file paths, code) that
+// translating would corrupt, and their schema is the agent's, not ours.
+var interactiveToolNames = map[string]struct{}{
+	"request_user_input": {},
+}
+
+// interactiveToolTextFields are the argument keys inside an interactive tool's
+// JSON arguments that hold user-facing prose. Nested under "questions"/"options".
+var interactiveToolTextFields = map[string]struct{}{
+	"header":      {},
+	"question":    {},
+	"label":       {},
+	"description": {},
+	"notes":       {},
+}
+
+// translateInteractiveToolCalls translates the prose fields inside the arguments
+// of user-facing interactive tools in the message, leaving every other tool call
+// untouched. Returns true when anything changed.
+func translateInteractiveToolCalls(ctx context.Context, caller *translationCaller, msg *llm.Message, channelID int, model, promptTemplate, targetLanguage string) bool {
+	changed := false
+
+	for i := range msg.ToolCalls {
+		call := &msg.ToolCalls[i]
+		if _, ok := interactiveToolNames[strings.ToLower(call.Function.Name)]; !ok {
+			continue
+		}
+
+		if strings.TrimSpace(call.Function.Arguments) == "" {
+			continue
+		}
+
+		var args any
+		if err := json.Unmarshal([]byte(call.Function.Arguments), &args); err != nil {
+			// Not JSON (or not the shape we expect): leave it untouched rather than
+			// risk mangling a payload the harness must parse.
+			continue
+		}
+
+		texts := collectInteractiveToolTexts(args)
+		if len(texts) == 0 {
+			continue
+		}
+
+		translatedTexts := make([]string, 0, len(texts))
+
+		anyChanged := false
+
+		for _, text := range texts {
+			if !shouldTranslate(text, targetLanguage) {
+				translatedTexts = append(translatedTexts, text)
+
+				continue
+			}
+
+			translatedText, err := caller.translate(ctx, channelID, model, text, promptTemplate, targetLanguage)
+			if err != nil {
+				log.Warn(ctx, "failed to translate interactive tool text, keeping original", log.Cause(err))
+				translatedTexts = append(translatedTexts, text)
+
+				continue
+			}
+
+			if translatedText != text {
+				anyChanged = true
+			}
+
+			translatedTexts = append(translatedTexts, translatedText)
+		}
+
+		if !anyChanged {
+			continue
+		}
+
+		applyInteractiveToolTexts(args, translatedTexts, new(int))
+
+		serialized, err := json.Marshal(args)
+		if err != nil {
+			log.Warn(ctx, "failed to re-marshal translated tool arguments, keeping original", log.Cause(err))
+			continue
+		}
+
+		call.Function.Arguments = string(serialized)
+		changed = true
+	}
+
+	return changed
+}
+
+// collectInteractiveToolTexts walks the tool arguments value and returns, in a
+// stable order, every string that is the value of a key in
+// interactiveToolTextFields. The order must match applyInteractiveToolTexts'
+// consumption exactly, so both walk the same structure the same way.
+func collectInteractiveToolTexts(value any) []string {
+	var texts []string
+
+	switch typed := value.(type) {
+	case map[string]any:
+		// Iterate keys in a deterministic order so collect/apply stay aligned.
+		keys := sortedKeys(typed)
+
+		for _, k := range keys {
+			if _, ok := interactiveToolTextFields[k]; ok && isNonEmptyString(typed[k]) {
+				texts = append(texts, typed[k].(string))
+
+				continue
+			}
+
+			texts = append(texts, collectInteractiveToolTexts(typed[k])...)
+		}
+	case []any:
+		for _, item := range typed {
+			texts = append(texts, collectInteractiveToolTexts(item)...)
+		}
+	}
+
+	return texts
+}
+
+// applyInteractiveToolTexts writes translated texts back into the arguments value
+// in the same deterministic order collectInteractiveToolTexts produced them. Keys
+// with empty values are not in the collected list, so they are skipped here too.
+func applyInteractiveToolTexts(value any, texts []string, cursor *int) {
+	switch typed := value.(type) {
+	case map[string]any:
+		keys := sortedKeys(typed)
+
+		for _, k := range keys {
+			if _, ok := interactiveToolTextFields[k]; ok && isNonEmptyString(typed[k]) {
+				if *cursor < len(texts) {
+					typed[k] = texts[*cursor]
+					*cursor++
+				}
+
+				continue
+			}
+
+			applyInteractiveToolTexts(typed[k], texts, cursor)
+		}
+	case []any:
+		for _, item := range typed {
+			applyInteractiveToolTexts(item, texts, cursor)
+		}
+	}
+}
+
+func sortedKeys(m map[string]any) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+
+	sort.Strings(keys)
+
+	return keys
+}
+
+func isNonEmptyString(value any) bool {
+	s, ok := value.(string)
+
+	return ok && strings.TrimSpace(s) != ""
 }
 
 // translateMessageContent translates a message's text content in place,
