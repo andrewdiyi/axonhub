@@ -114,6 +114,15 @@ func normalizeHistoryTowardAgent(ctx context.Context, caller *translationCaller,
 		if err := translateMessageContent(ctx, caller, msg, settings.ChannelID, settings.Model, settings.IncomingPromptTemplate, settings.AgentLanguage); err != nil {
 			log.Warn(ctx, "failed to translate history message, keeping original", log.Cause(err))
 		}
+
+		// Interactive tools (e.g. Codex plan mode's request_user_input) carry the
+		// questions/options the human reads, so the client replays them -- already
+		// translated into the human language -- as an assistant function_call in
+		// the next turn's history. Translate their prose back toward the agent
+		// language, otherwise the model sees its own Chinese questions in the
+		// history it is asked to continue. Non-interactive tool calls are left
+		// untouched: their arguments are machine data (shell commands, paths, code).
+		translateInteractiveToolCalls(ctx, caller, msg, settings.ChannelID, settings.Model, settings.IncomingPromptTemplate, settings.AgentLanguage)
 	}
 
 	changed := false
@@ -222,14 +231,12 @@ func (m *translationMiddleware) OnOutboundLlmResponse(ctx context.Context, respo
 	return response, nil
 }
 
-// OnOutboundLlmStream buffers the full streamed reply, translates the
-// user-facing prose in it once (there is no hook that exposes the full text of a
-// streamed turn before delivery, so this is the simplest correct behavior), and
-// then re-emits the stream with those prose deltas rewritten in place. Every
-// other byte -- reasoning, tool calls, encrypted content, and each chunk's
-// transformer metadata -- is passed through untouched. This trades incremental
-// streaming UX for correctness: the client receives nothing until generation and
-// translation both complete.
+// OnOutboundLlmStream translates the user-facing prose of a streamed reply as
+// the client consumes it, one buffered segment at a time, instead of draining
+// the whole turn before emitting anything. See translatedStream for why laziness
+// matters: buffering the entire turn left the client without even the SSE
+// response headers until generation and translation both finished, so a long
+// turn tripped a client/intermediary idle timeout and was cancelled.
 func (m *translationMiddleware) OnOutboundLlmStream(ctx context.Context, stream streams.Stream[*llm.Response]) (streams.Stream[*llm.Response], error) {
 	if isInternalTranslationCall(ctx) {
 		return stream, nil
@@ -253,251 +260,10 @@ func (m *translationMiddleware) OnOutboundLlmStream(ctx context.Context, stream 
 		return stream, nil
 	}
 
-	// streams.All drains but does not close. Every other wrapper (Map, Filter,
-	// ...) delegates Close() to the stream it wraps, so the eventual consumer's
-	// Close() cascades down to OutboundPersistentStream.Close(), where
-	// response-chunk persistence and execution-status finalization happen.
-	// Returning an unrelated streams.SliceStream below would otherwise sever
-	// that chain, leaving the execution stuck in "processing" forever.
-	defer stream.Close()
-
-	chunks, err := streams.All(stream)
-	if err != nil {
-		return streams.SliceStream(chunks), err
-	}
-
-	if translateOutgoingStreamChunks(ctx, caller, chunks, settings) {
-		persistTranslatedStream(ctx, state, chunks)
-	}
-
-	return streams.SliceStream(chunks), nil
-}
-
-// translateOutgoingStreamChunks rewrites, in place, the user-facing prose a
-// buffered streamed turn carries -- each choice's assistant text and the prose
-// arguments of interactive tools -- and reports whether anything changed.
-// Everything else (reasoning, ordinary tool calls including a Responses custom
-// tool call's script Input, encrypted content, and every chunk's transformer
-// metadata) is left exactly as the provider emitted it.
-//
-// Rebuilding the turn from a merged message instead silently drops data the
-// client depends on: merging only Function.Arguments emptied a Responses custom
-// tool call's Input (the script the agent must run, so the next turn failed with
-// "expects raw JavaScript source text"), and collapsing the chunks kept only the
-// last chunk's transformer metadata, detaching a reasoning item's encrypted
-// content from its provider id (the next turn then replayed an id the upstream
-// could not verify). Rewriting just the text in place reconstructs nothing.
-func translateOutgoingStreamChunks(ctx context.Context, caller *translationCaller, chunks []*llm.Response, settings *biz.TranslationSettings) bool {
-	// A streamed choice's text arrives split across many chunks. Translate each
-	// contiguous run of text as one string (translating fragments separately
-	// loses the sentence context the model needs), then write the result into the
-	// run's first text slot and empty the rest: downstream transformers
-	// concatenate the deltas in order, so the client still reads the whole
-	// translation. A run ends when a chunk carrying a tool call or reasoning sits
-	// between two text chunks, so a turn that interleaves prose with tool calls
-	// keeps its original ordering instead of being collapsed to the front. Runs
-	// are tracked per choice index so a multi-choice stream never mixes them.
-	type textRun struct {
-		slots  []*string
-		broken bool
-	}
-
-	runs := map[int]*textRun{}
-	var (
-		choiceOrder []int
-		textRuns    [][]*string
-	)
-
-	// Interactive tool arguments stream across chunks too; group the chunks
-	// carrying them so the tool's JSON can be assembled before its prose is
-	// translated. A tool call is keyed by its id, falling back to the id learned
-	// from its identity chunk (some providers emit only the index on argument
-	// deltas) and finally to its position: a response stream may start each
-	// message with its own tool-call list, so "first tool call seen" is not stable.
-	type toolKey struct {
-		id string
-
-		choice int
-		index  int
-	}
-
-	type slotKey struct {
-		choice int
-		index  int
-	}
-
-	toolSlots := map[toolKey][]*llm.ToolCall{}
-	toolNames := map[toolKey]string{}
-	idByIndex := map[slotKey]string{}
-
-	keyFor := func(choiceIndex int, tc *llm.ToolCall) toolKey {
-		slot := slotKey{choice: choiceIndex, index: tc.Index}
-
-		if tc.ID != "" {
-			idByIndex[slot] = tc.ID
-
-			return toolKey{id: tc.ID}
-		}
-
-		if id, ok := idByIndex[slot]; ok && id != "" {
-			return toolKey{id: id}
-		}
-
-		return toolKey{choice: choiceIndex, index: tc.Index}
-	}
-
-	for _, chunk := range chunks {
-		if chunk == nil {
-			continue
-		}
-
-		for i := range chunk.Choices {
-			choice := &chunk.Choices[i]
-			delta := choice.Delta
-			if delta == nil {
-				continue
-			}
-
-			run := runs[choice.Index]
-			if run == nil {
-				run = &textRun{}
-				runs[choice.Index] = run
-				choiceOrder = append(choiceOrder, choice.Index)
-			}
-
-			// Any non-text output ends the current text run.
-			if len(delta.ToolCalls) > 0 || delta.ReasoningContent != nil || delta.Reasoning != nil ||
-				delta.ReasoningSignature != nil || len(delta.InlineToolResults) > 0 {
-				run.broken = true
-			}
-
-			var (
-				slot      *string
-				tailParts []*string
-			)
-
-			if translationRoleMatches(cohesiveRole(delta.Role)) {
-				if delta.Content.Content != nil {
-					slot = delta.Content.Content
-				}
-
-				for j := range delta.Content.MultipleContent {
-					part := &delta.Content.MultipleContent[j]
-					if strings.EqualFold(part.Type, "text") && part.Text != nil {
-						tailParts = append(tailParts, part.Text)
-
-						continue
-					}
-
-					// A non-text part (image, compaction summary, ...) is a separate
-					// output item; text after it must not merge into the run before it.
-					run.broken = true
-				}
-			}
-
-			if slot != nil || len(tailParts) > 0 {
-				if run.broken && len(run.slots) > 0 {
-					textRuns = append(textRuns, run.slots)
-					run.slots = nil
-				}
-
-				run.broken = false
-
-				if slot != nil {
-					run.slots = append(run.slots, slot)
-				}
-
-				run.slots = append(run.slots, tailParts...)
-			}
-
-			for j := range delta.ToolCalls {
-				tc := &delta.ToolCalls[j]
-				key := keyFor(choice.Index, tc)
-
-				if tc.Function.Name != "" {
-					toolNames[key] = tc.Function.Name
-				}
-
-				if tc.Function.Arguments != "" {
-					toolSlots[key] = append(toolSlots[key], tc)
-				}
-			}
-		}
-	}
-
-	for _, index := range choiceOrder {
-		run := runs[index]
-		if len(run.slots) > 0 {
-			textRuns = append(textRuns, run.slots)
-		}
-	}
-
-	changed := false
-
-	for _, slots := range textRuns {
-		var builder strings.Builder
-
-		for _, slot := range slots {
-			builder.WriteString(*slot)
-		}
-
-		text := builder.String()
-		if !shouldTranslate(text, settings.HumanLanguage) {
-			continue
-		}
-
-		translated, err := caller.translate(ctx, settings.ChannelID, settings.Model, text, settings.OutgoingPromptTemplate, settings.HumanLanguage)
-		if err != nil {
-			log.Warn(ctx, "failed to translate outgoing streamed response, passing through original text", log.Cause(err))
-
-			continue
-		}
-
-		if translated == text {
-			continue
-		}
-
-		*slots[0] = translated
-		for _, slot := range slots[1:] {
-			*slot = ""
-		}
-
-		changed = true
-	}
-
-	for key, slots := range toolSlots {
-		if _, ok := interactiveToolNames[strings.ToLower(toolNames[key])]; !ok {
-			continue
-		}
-
-		var builder strings.Builder
-
-		for _, tc := range slots {
-			builder.WriteString(tc.Function.Arguments)
-		}
-
-		// Reuse the non-streaming interactive-tool translation by assembling the
-		// streamed fragments into one tool call, translating it, then writing the
-		// result back into the first fragment's slot.
-		msg := &llm.Message{ToolCalls: []llm.ToolCall{{
-			Type:     slots[0].Type,
-			Index:    slots[0].Index,
-			Function: llm.FunctionCall{Name: toolNames[key], Arguments: builder.String()},
-		}}}
-
-		if !translateInteractiveToolCalls(ctx, caller, msg, settings.ChannelID, settings.Model, settings.OutgoingPromptTemplate, settings.HumanLanguage) {
-			continue
-		}
-
-		slots[0].Function.Arguments = msg.ToolCalls[0].Function.Arguments
-		for _, tc := range slots[1:] {
-			tc.Function.Arguments = ""
-		}
-
-		changed = true
-	}
-
-	return changed
+	// The wrapper delegates Close() to the upstream, so the consumer's Close()
+	// still cascades to OutboundPersistentStream.Close(), where response-chunk
+	// persistence and execution-status finalization happen.
+	return newTranslatedStream(ctx, caller, settings, state, stream), nil
 }
 
 // persistTranslatedStream records the client-facing (translated) streamed turn
