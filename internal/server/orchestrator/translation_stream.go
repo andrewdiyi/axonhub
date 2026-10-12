@@ -89,10 +89,13 @@ type translatedStream struct {
 	segChunks  []*llm.Response
 	segText    strings.Builder
 
-	// Buffered interactive/ordinary tool-call runs, keyed so fragments group.
+	// Buffered interactive tool-call runs (request_user_input), keyed so their
+	// streamed argument fragments group. Only interactive tools are buffered; see
+	// handle.
 	toolBuf   map[toolCallKey]*toolRun
 	toolOrder []toolCallKey
 	idByIndex map[toolSlotKey]string
+	toolNames map[toolSlotKey]string
 
 	// persistOnce guards the audit write so it happens at most once, whether the
 	// stream reaches real EOF or the consumer closes early.
@@ -119,6 +122,7 @@ func newTranslatedStream(
 		},
 		toolBuf:   map[toolCallKey]*toolRun{},
 		idByIndex: map[toolSlotKey]string{},
+		toolNames: map[toolSlotKey]string{},
 	}
 }
 
@@ -228,9 +232,24 @@ func (s *translatedStream) handle(chunk *llm.Response) {
 		// happens: provider streams keep text and tool/reasoning chunks disjoint.
 		s.flushSegment()
 
-		if len(delta.ToolCalls) > 0 {
+		if len(delta.ToolCalls) > 0 && s.shouldBufferTool(choice.Index, delta) {
+			// Only a user-facing interactive tool's arguments are worth buffering
+			// (to translate its JSON as one payload). An ordinary tool call carries
+			// machine data and is forwarded immediately and chunk-by-chunk: a
+			// Responses custom tool call streams its script Input across chunks, and
+			// holding the opening item-added chunk (which alone carries the call id
+			// and name) while releasing only later deltas strips the request of the
+			// call identity — the agent then sees a tool call with no "what to run",
+			// ends its turn, and the user perceives the reply as cut off.
 			s.bufferToolChunk(chunk, choice.Index, delta)
 		} else {
+			// A different tool call interrupts any buffered interactive run; release
+			// it first so this chunk keeps its original position. Reasoning and other
+			// non-tool chunks do not interrupt a run.
+			if len(delta.ToolCalls) > 0 {
+				s.flushAllTools()
+			}
+
 			s.emit(chunk)
 		}
 
@@ -400,10 +419,44 @@ func (s *translatedStream) resetSegment() {
 	s.segText.Reset()
 }
 
-// bufferToolChunk groups one chunk's tool-call fragment under its call key,
-// flushing any buffered run the chunk does not continue so runs stay ordered.
-// Only the first tool call of a chunk is tracked; provider streams carry one
-// tool call's fragment per chunk.
+// shouldBufferTool reports whether a delta's tool call is a user-facing
+// interactive tool (its arguments are prose to translate), meaning its argument
+// fragments must be grouped before translation. The name arrives on the opening
+// chunk; later argument-only chunks fall back to the name learned for that call.
+func (s *translatedStream) shouldBufferTool(choiceIndex int, delta *llm.Message) bool {
+	name := toolCallName(&delta.ToolCalls[0])
+	if name == "" {
+		name = s.toolNames[toolSlotKey{choice: choiceIndex, index: delta.ToolCalls[0].Index}]
+	}
+
+	if name == "" {
+		// A fragment whose call is not yet identified: buffering briefly is safe,
+		// since the opening chunk of the same call is buffered too and arrives first.
+		return true
+	}
+
+	_, interactive := interactiveToolNames[strings.ToLower(name)]
+
+	return interactive
+}
+
+// toolCallName returns the tool name a delta carries, from either the function
+// name or a Responses custom tool call's name.
+func toolCallName(tc *llm.ToolCall) string {
+	if tc.Function.Name != "" {
+		return tc.Function.Name
+	}
+
+	if tc.ResponseCustomToolCall != nil {
+		return tc.ResponseCustomToolCall.Name
+	}
+
+	return ""
+}
+
+// bufferToolChunk groups one chunk's interactive-tool argument fragment under its
+// call key, flushing any buffered run the chunk does not continue so runs stay
+// ordered. Only a single tool call per chunk is expected from provider streams.
 func (s *translatedStream) bufferToolChunk(chunk *llm.Response, choiceIndex int, delta *llm.Message) {
 	key := s.keyFor(choiceIndex, &delta.ToolCalls[0])
 
@@ -424,8 +477,9 @@ func (s *translatedStream) bufferToolChunk(chunk *llm.Response, choiceIndex int,
 		s.toolOrder = append(s.toolOrder, key)
 	}
 
-	if delta.ToolCalls[0].Function.Name != "" {
-		run.name = delta.ToolCalls[0].Function.Name
+	if name := toolCallName(&delta.ToolCalls[0]); name != "" {
+		run.name = name
+		s.toolNames[toolSlotKey{choice: choiceIndex, index: delta.ToolCalls[0].Index}] = name
 	}
 
 	run.chunks = append(run.chunks, chunk)

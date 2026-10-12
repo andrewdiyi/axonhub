@@ -149,6 +149,7 @@ func TestTranslatedStreamTranslatesStreamedInteractiveTool(t *testing.T) {
 		},
 		toolBuf:   map[toolCallKey]*toolRun{},
 		idByIndex: map[toolSlotKey]string{},
+		toolNames: map[toolSlotKey]string{},
 	}
 
 	chunks := collect(s)
@@ -195,11 +196,95 @@ func TestTranslatedStreamLeavesNonInteractiveToolUntouched(t *testing.T) {
 		},
 		toolBuf:   map[toolCallKey]*toolRun{},
 		idByIndex: map[toolSlotKey]string{},
+		toolNames: map[toolSlotKey]string{},
 	}
 
 	chunks := collect(s)
 	if got := chunks[0].Choices[0].Delta.ToolCalls[0].Function.Arguments; got != `{"cmd":"ls -la"}` {
 		t.Fatalf("exec args = %q, want untouched", got)
+	}
+}
+
+// TestTranslatedStreamForwardsCustomToolIdentityImmediately guards the regression
+// where a Responses custom tool call's opening chunk (which alone carries the
+// call id/name) was buffered while only its later argument deltas were released,
+// stripping the provider request of the call identity. The identity chunk must
+// reach the client before any argument delta.
+func TestTranslatedStreamForwardsCustomToolIdentityImmediately(t *testing.T) {
+	identity := func() *llm.Response {
+		return &llm.Response{Choices: []llm.Choice{{Index: 0, Delta: &llm.Message{
+			Role: "assistant",
+			ToolCalls: []llm.ToolCall{{
+				ID:   "call_abc",
+				Type: "responses_custom_tool",
+				ResponseCustomToolCall: &llm.ResponseCustomToolCall{
+					CallID: "call_abc",
+					Name:   "exec",
+				},
+			}},
+		}}}}
+	}
+
+	argDelta := func(input string) *llm.Response {
+		return &llm.Response{Choices: []llm.Choice{{Index: 0, Delta: &llm.Message{
+			Role: "assistant",
+			ToolCalls: []llm.ToolCall{{
+				Index: 0,
+				Type:  "responses_custom_tool",
+				ResponseCustomToolCall: &llm.ResponseCustomToolCall{
+					CallID: "call_abc",
+					Name:   "exec",
+					Input:  input,
+				},
+			}},
+		}}}}
+	}
+
+	upstream := streamOf(
+		textChunk("我先看一下。"),
+		identity(),
+		argDelta("text(await"),
+		argDelta(" tools.exec());"),
+	)
+
+	s := &translatedStream{
+		ctx:           context.Background(),
+		settings:      testSettings(),
+		upstream:      upstream,
+		translateText: func(text string) (string, error) { return text, nil },
+		translateTool: func(msg *llm.Message) bool { return false },
+		toolBuf:       map[toolCallKey]*toolRun{},
+		idByIndex:     map[toolSlotKey]string{},
+		toolNames:     map[toolSlotKey]string{},
+	}
+
+	chunks := collect(s)
+
+	// The identity chunk (with the call id) must appear, and before any argument
+	// fragment; otherwise the client never learns what tool to run.
+	identityIdx, firstArgIdx := -1, -1
+
+	for i, c := range chunks {
+		tc := c.Choices[0].Delta.ToolCalls
+		if len(tc) == 0 {
+			continue
+		}
+
+		if tc[0].ResponseCustomToolCall != nil && tc[0].ResponseCustomToolCall.Input == "" {
+			if identityIdx == -1 {
+				identityIdx = i
+			}
+		} else if identityIdx != -1 && firstArgIdx == -1 {
+			firstArgIdx = i
+		}
+	}
+
+	if identityIdx == -1 {
+		t.Fatal("identity chunk (call id) was not forwarded")
+	}
+
+	if firstArgIdx != -1 && firstArgIdx < identityIdx {
+		t.Fatalf("argument delta forwarded before identity chunk (arg=%d id=%d)", firstArgIdx, identityIdx)
 	}
 }
 
