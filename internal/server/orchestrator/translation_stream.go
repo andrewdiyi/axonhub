@@ -3,9 +3,12 @@ package orchestrator
 import (
 	"context"
 	"strings"
+	"sync"
+	"time"
 	"unicode/utf8"
 
 	"github.com/looplj/axonhub/internal/log"
+	"github.com/looplj/axonhub/internal/pkg/xcontext"
 	"github.com/looplj/axonhub/internal/server/biz"
 	"github.com/looplj/axonhub/llm"
 	"github.com/looplj/axonhub/llm/streams"
@@ -72,11 +75,12 @@ type translatedStream struct {
 	translateText func(text string) (string, error)
 	translateTool func(msg *llm.Message) bool
 
-	out     []*llm.Response
-	outHead int
-	emitted []*llm.Response
-	changed bool
-	eof     bool
+	out       []*llm.Response
+	outHead   int
+	emitted   []*llm.Response
+	changed   bool
+	eof       bool
+	persisted bool
 
 	// Current assistant-text segment awaiting translation.
 	segStarted bool
@@ -89,6 +93,10 @@ type translatedStream struct {
 	toolBuf   map[toolCallKey]*toolRun
 	toolOrder []toolCallKey
 	idByIndex map[toolSlotKey]string
+
+	// persistOnce guards the audit write so it happens at most once, whether the
+	// stream reaches real EOF or the consumer closes early.
+	persistOnce sync.Once
 }
 
 func newTranslatedStream(
@@ -180,6 +188,14 @@ func (s *translatedStream) Err() error {
 }
 
 func (s *translatedStream) Close() error {
+	// Release anything still buffered and flush the audit record before closing
+	// the upstream, so a consumer that stops early (or a stream that never reached
+	// EOF) still records the client-facing turn. persist() is idempotent and
+	// detached, so this cannot corrupt or double-write the record.
+	s.flushSegment()
+	s.flushAllTools()
+	s.persist()
+
 	if s.upstream == nil {
 		return nil
 	}
@@ -507,10 +523,27 @@ func (s *translatedStream) emit(chunk *llm.Response) {
 	s.emitted = append(s.emitted, chunk)
 }
 
+// persist writes the client-facing (translated) turn for audit, at most once. It
+// runs on a detached, bounded context: the consumer may call it from Close()
+// after the request context is already cancelled (client disconnect), where the
+// ent update would otherwise fail with "context canceled" and silently drop the
+// record.
 func (s *translatedStream) persist() {
-	if s.changed {
-		persistTranslatedStream(s.ctx, s.state, s.emitted)
+	if !s.changed {
+		return
 	}
+
+	ctx := s.ctx
+	if ctx == nil {
+		return
+	}
+
+	detached, cancel := xcontext.DetachWithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	s.persistOnce.Do(func() {
+		persistTranslatedStream(detached, s.state, s.emitted)
+	})
 }
 
 // textSlotsOf returns the writable text slots a delta carries -- the scalar
